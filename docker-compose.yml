@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgis/postgis:15-3.4   # Postgres 15 + PostGIS 3.4 + TimescaleDB support
+    container_name: pt_analytics_db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ptqueryer        
+      POSTGRES_PASSWORD: pt_pass    
+      POSTGRES_DB: pt_analytics_db           
+
+    ports:
+      - "5432:5432"                  
+
+    volumes:
+      - db_data:/var/lib/postgresql/data  
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  db_data:
