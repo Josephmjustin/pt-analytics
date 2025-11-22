@@ -3,11 +3,32 @@ from psycopg2.extras import execute_values
 from google.transit import gtfs_realtime_pb2
 from datetime import datetime
 import time
+import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# BODS API configuration
+BODS_API_URL = "https://data.bus-data.dft.gov.uk/api/v1/gtfsrtdatafeed/"
+API_KEY = os.getenv("BODS_API_KEY")
+LIVERPOOL_BBOX = "53.418993289369965,53.44199101568962,-2.976103768216373,-2.876646486925741"
 
 feed = gtfs_realtime_pb2.FeedMessage()
 
-with open('liverpool_test.pb', 'rb') as f:
-    feed.ParseFromString(f.read())
+# Fetch live data from BODS API
+params = {
+    'boundingBox': LIVERPOOL_BBOX,
+    'api_key': API_KEY
+}
+
+response = requests.get(BODS_API_URL, params=params)
+
+if response.status_code == 200:
+    feed.ParseFromString(response.content)
+else:
+    print(f"API Error: {response.status_code}")
+    exit(1)
 
 try:
     conn = psycopg2.connect(
@@ -19,7 +40,7 @@ try:
     )
     cursor = conn.cursor()
     batch = []
-    
+
     parse_start = time.time()
     
     for entity in feed.entity:
