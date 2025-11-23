@@ -9,6 +9,10 @@
 - Continuous polling (60s intervals)
 - Duplicate prevention
 - Batch inserts optimized
+- GTFS Static data loaded (stops, routes, trips, stop_times)
+- PostGIS spatial indexing on stops
+- 8M+ scheduled stop times for North West England
+- 247 stops, 16,477 trips in Liverpool scope
 
 ### Database
 - **Table:** vehicle_positions
@@ -52,6 +56,9 @@ pt-analytics/
 2. Calculate service quality metrics
 3. Build REST API (FastAPI)
 4. Create simple dashboard
+5. Match vehicle positions to routes
+6. Spatial matching of vehicles to stops
+7. Calculate actual vs scheduled headways
 
 ### Configuration
 - **API:** BODS GTFS-RT endpoint
@@ -64,3 +71,4 @@ pt-analytics/
 - Focus on service quality vs driver behavior
 - Liverpool first, then multi-region
 - Depth before breadth strategy
+
