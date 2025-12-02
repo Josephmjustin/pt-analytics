@@ -57,7 +57,7 @@ def poll_and_ingest():
                 trip_id = v.trip.trip_id if v.HasField('trip') else None
                 bearing = v.position.bearing if v.position.HasField('bearing') else None
                 
-                batch.append((vehicle_id, latitude, longitude, timestamp, route_id, trip_id, bearing))
+                batch.append((vehicle_id, latitude, longitude, timestamp, route_id, trip_id, bearing, longitude, latitude))
         
         parse_end = time.time()
         
@@ -65,10 +65,11 @@ def poll_and_ingest():
         insert_start = time.time()
         execute_values(cursor, """
             INSERT INTO vehicle_positions 
-            (vehicle_id, latitude, longitude, timestamp, route_id, trip_id, bearing)
+            (vehicle_id, latitude, longitude, timestamp, route_id, trip_id, bearing, geom)
             VALUES %s
             ON CONFLICT (vehicle_id, timestamp) DO NOTHING
-        """, batch)
+        """, batch, 
+        template="(%s, %s, %s, %s, %s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))")
         
         conn.commit()
         insert_end = time.time()
