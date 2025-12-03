@@ -49,9 +49,14 @@ def poll_and_ingest():
             if entity.HasField('vehicle'):
                 v = entity.vehicle
                 
-                vehicle_id = v.vehicle.id if v.HasField('vehicle') else None
                 latitude = v.position.latitude
                 longitude = v.position.longitude
+                
+                # Filter to Liverpool only (53.35-53.48, -3.05 to -2.85)
+                if not (53.35 <= latitude <= 53.48 and -3.05 <= longitude <= -2.85):
+                    continue
+                
+                vehicle_id = v.vehicle.id if v.HasField('vehicle') else None
                 timestamp = datetime.fromtimestamp(v.timestamp) if v.HasField('timestamp') else None
                 route_id = v.trip.route_id if v.HasField('trip') else None
                 trip_id = v.trip.trip_id if v.HasField('trip') else None
