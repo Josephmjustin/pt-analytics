@@ -9,4 +9,4 @@ venv/
 .DS_Store
 notebooks/.ipynb_checkpoints/
 static/
-.sql 
+.sql *.sql
