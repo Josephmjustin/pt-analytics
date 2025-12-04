@@ -31,18 +31,18 @@ if __name__ == "__main__":
         tags=["analytics", "bunching"]
     )
     
-    # Cleanup: every 10 minutes (after analyses accumulate)
-    cleanup_deployment = cleanup_pipeline.to_deployment(
-        name="cleanup-every-10min",
+    # Aggregation: every 10 minutes (before cleanup)
+    aggregation_deployment = aggregation_pipeline.to_deployment(
+        name="aggregation-every-10min",
         interval=600,
-        tags=["maintenance", "cleanup"]
+        tags=["aggregation", "patterns"]
     )
     
-    # Aggregation: every 15 minutes
-    aggregation_deployment = aggregation_pipeline.to_deployment(
-        name="aggregation-every-15min",
+    # Cleanup: every 15 minutes (after aggregation)
+    cleanup_deployment = cleanup_pipeline.to_deployment(
+        name="cleanup-every-15min",
         interval=900,
-        tags=["aggregation", "patterns"]
+        tags=["maintenance", "cleanup"]
     )
     
     # Serve all deployments
@@ -51,8 +51,8 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Ingestion:   every 60 seconds")
     print("Analysis:    every 5 minutes")
-    print("Cleanup:     every 10 minutes")
-    print("Aggregation: every 15 minutes")
+    print("Aggregation: every 10 minutes (learn patterns)")
+    print("Cleanup:     every 15 minutes (delete old data)")
     print("=" * 60)
     print("Press Ctrl+C to stop cleanly")
     print("=" * 60)

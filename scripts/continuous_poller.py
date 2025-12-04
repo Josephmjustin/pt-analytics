@@ -34,11 +34,11 @@ def poll_and_ingest():
         
         # Database connection
         conn = psycopg2.connect(
-            host="localhost",
-            port=5432,
-            database="pt_analytics_db",
-            user="ptqueryer",
-            password="pt_pass"
+            host=os.getenv('DB_HOST'),
+            port=os.getenv('DB_PORT'),
+            database=os.getenv('DB_NAME'),
+            user=os.getenv('DB_USER'),
+            password=os.getenv('DB_PASSWORD')
         )
         cursor = conn.cursor()
         batch = []

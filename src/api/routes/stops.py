@@ -33,6 +33,43 @@ def get_all_stops():
     
     return {"stops": stops, "count": len(stops)}
 
+@router.get("/all-osm")
+def get_all_osm_stops():
+    """Get ALL OSM stops in Liverpool bbox, with bunching data if available"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    query = """
+        WITH latest_bunching AS (
+            SELECT DISTINCT ON (stop_id)
+                stop_id,
+                avg_bunching_rate,
+                total_count
+            FROM bunching_by_stop
+            ORDER BY stop_id, last_updated DESC
+        )
+        SELECT DISTINCT ON (os.osm_id)
+            os.osm_id::TEXT as stop_id,
+            os.name as stop_name,
+            os.latitude,
+            os.longitude,
+            lb.avg_bunching_rate,
+            lb.total_count
+        FROM osm_stops os
+        LEFT JOIN latest_bunching lb ON os.osm_id::TEXT = lb.stop_id::TEXT
+        WHERE os.latitude BETWEEN 53.35 AND 53.48
+          AND os.longitude BETWEEN -3.05 AND -2.85
+        ORDER BY os.osm_id
+    """
+    
+    cur.execute(query)
+    stops = cur.fetchall()
+    
+    cur.close()
+    conn.close()
+    
+    return {"stops": stops, "count": len(stops)}
+
 @router.get("/stats")
 def get_stops_stats():
     """Get statistics for all monitored stops"""
@@ -71,6 +108,59 @@ def get_stops_stats():
     result['active_buses'] = buses_result['active_buses'] if buses_result else 0
     
     return result
+
+@router.get("/headways")
+def get_headway_summary():
+    """Get summary of route headway baselines"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        SELECT 
+            COUNT(*) as total_baselines,
+            COUNT(DISTINCT route_id) as unique_routes,
+            ROUND(AVG(median_headway_minutes)::numeric, 1) as avg_median,
+            ROUND(MIN(median_headway_minutes)::numeric, 1) as min_median,
+            ROUND(MAX(median_headway_minutes)::numeric, 1) as max_median,
+            SUM(observation_count) as total_observations
+        FROM route_headway_baselines
+    """)
+    
+    summary = cur.fetchone()
+    
+    cur.close()
+    conn.close()
+    
+    return summary or {}
+
+@router.get("/{stop_id}/routes")
+def get_stop_routes(stop_id: str):
+    """Get all routes passing through this stop with bunching scores"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get routes from route_headway_baselines
+    query = """
+        SELECT DISTINCT
+            rhb.route_id,
+            r.route_short_name,
+            r.route_long_name,
+            rhb.median_headway_minutes,
+            bs.avg_bunching_rate
+        FROM route_headway_baselines rhb
+        JOIN gtfs_routes r ON rhb.route_id = r.route_id
+        LEFT JOIN bunching_by_stop bs ON rhb.stop_id::TEXT = bs.stop_id::TEXT
+        WHERE rhb.stop_id::TEXT = %s
+        ORDER BY r.route_short_name
+    """
+    
+    cur.execute(query, (stop_id,))
+    routes = cur.fetchall()
+    
+    cur.close()
+    conn.close()
+    
+    return {"routes": routes}
 
 @router.get("/{stop_id}")
 def get_stop_details(stop_id: str):
@@ -130,45 +220,3 @@ def get_stop_details(stop_id: str):
             "monthly": monthly
         }
     }
-
-@router.get("/{stop_id}/routes")
-def get_stop_routes(stop_id: str):
-    """Get all routes passing through this stop with bunching scores"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    # First get the stop name from bunching table
-    cur.execute("SELECT stop_name FROM bunching_by_stop WHERE stop_id = %s", (stop_id,))
-    result = cur.fetchone()
-    
-    if not result:
-        cur.close()
-        conn.close()
-        return {"routes": []}
-    
-    stop_name = result['stop_name']
-    
-    # Find routes through stops with matching names
-    query = """
-        SELECT DISTINCT
-            r.route_id,
-            r.route_short_name,
-            r.route_long_name,
-            AVG(bs.avg_bunching_rate) as avg_bunching_rate
-        FROM gtfs_stops gs
-        JOIN gtfs_stop_times st ON gs.stop_id = st.stop_id
-        JOIN gtfs_trips t ON st.trip_id = t.trip_id
-        JOIN gtfs_routes r ON t.route_id = r.route_id
-        LEFT JOIN bunching_by_stop bs ON gs.stop_name = bs.stop_name
-        WHERE gs.stop_name = %s
-        GROUP BY r.route_id, r.route_short_name, r.route_long_name
-        ORDER BY r.route_short_name
-    """
-    
-    cur.execute(query, (stop_name,))
-    routes = cur.fetchall()
-    
-    cur.close()
-    conn.close()
-    
-    return {"routes": routes}
