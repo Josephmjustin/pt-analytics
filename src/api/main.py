@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import stops, vehicles, routes
+from src.api.routes import stops, vehicles, routes
 
 app = FastAPI(title="PT Analytics API", version="1.0.0")
 
