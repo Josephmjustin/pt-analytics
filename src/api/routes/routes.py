@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from database import get_db_connection
+from src.api.database import get_db_connection
 import io
 import csv
 

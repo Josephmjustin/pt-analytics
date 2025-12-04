@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from database import get_db_connection
+from src.api.database import get_db_connection
 from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
