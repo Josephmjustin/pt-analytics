@@ -22,19 +22,19 @@ This approach works with any transit agency data without requiring schedule reco
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  UK Bus Open Data Service (BODS) - GTFS-RT Feed        │
-│  Liverpool Region (53.35-53.48, -3.05--2.80)           │
+│  UK Bus Open Data Service (BODS) - GTFS-RT Feed         │
+│  Liverpool Region (53.35-53.48, -3.05--2.80)            │
 └────────────────────┬────────────────────────────────────┘
                      │
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │  PREFECT CLOUD ORCHESTRATION                            │
-│  ┌────────────────────────────────────────────────┐    │
-│  │ Ingestion Flow (60s)    - Polls BODS API       │    │
-│  │ Analysis Flow (5min)    - Spatial matching     │    │
-│  │ Aggregation Flow (10min)- Pattern learning     │    │
-│  │ Cleanup Flow (15min)    - Data management      │    │
-│  └────────────────────────────────────────────────┘    │
+│  ┌────────────────────────────────────────────────┐     │
+│  │ Ingestion Flow (60s)    - Polls BODS API       │     │
+│  │ Analysis Flow (5min)    - Spatial matching     │     │
+│  │ Aggregation Flow (10min)- Pattern learning     │     │
+│  │ Cleanup Flow (15min)    - Data management      │     │
+│  └────────────────────────────────────────────────┘     │
 └────────────────────┬────────────────────────────────────┘
                      │
                      ▼
@@ -122,18 +122,22 @@ This approach works with any transit agency data without requiring schedule reco
 
 ## Bunching Detection Algorithm
 
-Route-aware detection using dynamic thresholds:
+Route-aware detection using dynamic thresholds based on learned patterns:
 
-1. **Calculate route median headway** from last 24 hours
-2. **Bunching threshold:** 50% of median headway
-3. **Minimum floor:** 2 minutes (prevents false positives on high-frequency routes)
-4. **Bunching event:** Two buses arrive closer than threshold
+1. **Calculate route baseline** from `route_headway_baselines` table (median headway per route/stop)
+2. **Bunching threshold:** `max(route_baseline * 0.5, 2.0)` minutes
+3. **Fallback:** If no baseline exists, use 2.0 minutes fixed threshold
+4. **Bunching event:** Two consecutive buses arrive closer than threshold
 
-Example:
-- Route scheduled every 10 min → bunching if <5 min apart
-- Route scheduled every 4 min → bunching if <2 min apart (floor)
+**The 2-minute floor prevents false positives on very high-frequency routes.**
 
-This approach differentiates between legitimate high-frequency service and actual bunching.
+Example thresholds:
+- Route baseline: 10 min → threshold = max(5, 2) = **5 min**
+- Route baseline: 4 min → threshold = max(2, 2) = **2 min**
+- Route baseline: 3 min → threshold = max(1.5, 2) = **2 min** (floor applied)
+- No baseline data → threshold = **2 min** (fallback)
+
+This approach differentiates between legitimate high-frequency service and actual bunching while learning route-specific patterns over time.
 
 ## Key Features
 
@@ -158,49 +162,170 @@ This approach differentiates between legitimate high-frequency service and actua
 
 ## Database Schema
 
-### Core Tables
+### bunching_by_day
 ```sql
--- Vehicle positions with spatial geometry
-vehicle_positions (
-    id SERIAL,
-    vehicle_id VARCHAR,
-    latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION,
-    geom GEOMETRY(Point, 4326),  -- PostGIS
-    timestamp TIMESTAMP,
-    route_id VARCHAR,
-    trip_id VARCHAR,
-    bearing FLOAT
+bunching_by_day (
+    stop_id                        TEXT                 NOT NULL
+    day_of_week                    INTEGER              NOT NULL
+    avg_bunching_rate              NUMERIC              NULL
+    total_count                    INTEGER              NULL
+    last_updated                   TIMESTAMP WITHOUT TIME ZONE NULL
 )
+```
 
--- OSM bus stops with spatial index
+### bunching_by_hour
+```sql
+bunching_by_hour (
+    stop_id                        TEXT                 NOT NULL
+    hour_of_day                    INTEGER              NOT NULL
+    avg_bunching_rate              NUMERIC              NULL
+    total_count                    INTEGER              NULL
+    last_updated                   TIMESTAMP WITHOUT TIME ZONE NULL
+)
+```
+
+### bunching_by_hour_day
+```sql
+bunching_by_hour_day (
+    stop_id                        TEXT                 NOT NULL
+    hour_of_day                    INTEGER              NOT NULL
+    day_of_week                    INTEGER              NOT NULL
+    avg_bunching_rate              NUMERIC              NULL
+    total_count                    INTEGER              NULL
+    last_updated                   TIMESTAMP WITHOUT TIME ZONE NULL
+)
+```
+
+### bunching_by_month
+```sql
+bunching_by_month (
+    stop_id                        TEXT                 NOT NULL
+    month                          INTEGER              NOT NULL
+    avg_bunching_rate              NUMERIC              NULL
+    total_count                    INTEGER              NULL
+    last_updated                   TIMESTAMP WITHOUT TIME ZONE NULL
+)
+```
+
+### bunching_by_stop
+```sql
+bunching_by_stop (
+    stop_id                        TEXT                 NOT NULL
+    stop_name                      TEXT                 NULL
+    avg_bunching_rate              NUMERIC              NULL
+    total_count                    INTEGER              NULL
+    last_updated                   TIMESTAMP WITHOUT TIME ZONE NULL
+)
+```
+
+### bunching_scores
+```sql
+bunching_scores (
+    id                             INTEGER              NOT NULL
+    stop_id                        TEXT                 NOT NULL
+    stop_name                      TEXT                 NOT NULL
+    analysis_timestamp             TIMESTAMP WITHOUT TIME ZONE NOT NULL
+    total_arrivals                 INTEGER              NOT NULL
+    bunched_count                  INTEGER              NOT NULL
+    bunching_rate_pct              NUMERIC              NOT NULL
+    avg_headway_minutes            NUMERIC              NULL
+    min_headway_minutes            NUMERIC              NULL
+    max_headway_minutes            NUMERIC              NULL
+    data_window_start              TIMESTAMP WITHOUT TIME ZONE NOT NULL
+    data_window_end                TIMESTAMP WITHOUT TIME ZONE NOT NULL
+)
+```
+
+### gtfs_routes
+```sql
+gtfs_routes (
+    route_id                       TEXT                 NOT NULL
+    agency_id                      TEXT                 NULL
+    route_short_name               TEXT                 NULL
+    route_long_name                TEXT                 NULL
+    route_type                     INTEGER              NULL
+)
+```
+
+### gtfs_stops
+```sql
+gtfs_stops (
+    stop_id                        TEXT                 NOT NULL
+    stop_code                      TEXT                 NULL
+    stop_name                      TEXT                 NOT NULL
+    stop_lat                       DOUBLE PRECISION     NOT NULL
+    stop_lon                       DOUBLE PRECISION     NOT NULL
+    location                       GEOMETRY             NULL
+    wheelchair_boarding            INTEGER              NULL
+    location_type                  INTEGER              NULL
+    parent_station                 TEXT                 NULL
+    platform_code                  TEXT                 NULL
+)
+```
+
+### gtfs_trips
+```sql
+gtfs_trips (
+    trip_id                        TEXT                 NOT NULL
+    route_id                       TEXT                 NULL
+    service_id                     TEXT                 NULL
+    trip_headsign                  TEXT                 NULL
+    direction_id                   INTEGER              NULL
+    block_id                       TEXT                 NULL
+    shape_id                       TEXT                 NULL
+    wheelchair_accessible          INTEGER              NULL
+    vehicle_journey_code           TEXT                 NULL
+)
+```
+
+### osm_stops
+```sql
 osm_stops (
-    id SERIAL,
-    osm_id BIGINT,
-    name VARCHAR,
-    latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION,
-    geom GEOMETRY(Point, 4326)
+    osm_id                         BIGINT               NOT NULL
+    name                           TEXT                 NULL
+    latitude                       DOUBLE PRECISION     NOT NULL
+    longitude                      DOUBLE PRECISION     NOT NULL
+    location                       GEOGRAPHY            NULL
+    tags                           JSONB                NULL
+    created_at                     TIMESTAMP WITHOUT TIME ZONE NULL
 )
+```
 
--- Detected bunching events
-bunching_events (
-    id SERIAL,
-    route_id VARCHAR,
-    stop_id INTEGER,
-    headway_minutes FLOAT,
-    threshold_minutes FLOAT,
-    timestamp TIMESTAMP,
-    severity VARCHAR  -- 'minor', 'moderate', 'severe'
+### route_headway_baselines
+```sql
+route_headway_baselines (
+    route_id                       TEXT                 NOT NULL
+    stop_id                        TEXT                 NOT NULL
+    stop_name                      TEXT                 NULL
+    median_headway_minutes         NUMERIC              NULL
+    avg_headway_minutes            NUMERIC              NULL
+    observation_count              INTEGER              NULL
+    last_updated                   TIMESTAMP WITHOUT TIME ZONE NULL
+)
+```
+
+### vehicle_positions
+```sql
+vehicle_positions (
+    id                             INTEGER              NOT NULL
+    vehicle_id                     TEXT                 NOT NULL
+    latitude                       DOUBLE PRECISION     NOT NULL
+    longitude                      DOUBLE PRECISION     NOT NULL
+    timestamp                      TIMESTAMP WITHOUT TIME ZONE NOT NULL
+    route_id                       TEXT                 NULL
+    trip_id                        TEXT                 NULL
+    bearing                        INTEGER              NULL
+    geom                           GEOMETRY             NULL
 )
 ```
 
 ### Aggregation Tables
-- `hourly_patterns` - Hourly bunching rates per stop
-- `daily_patterns` - Daily service quality metrics
-- `stop_patterns` - Long-term stop performance
-- `route_patterns` - Route-level aggregations
-- `route_baselines` - Dynamic headway thresholds
+- `bunching_by_hour` - Hourly bunching rates per stop
+- `bunching_by_day` - Daily service quality metrics
+- `bunching_by_hour_day` - Combined hourly/daily patterns
+- `bunching_by_month` - Monthly service trends
+- `bunching_by_stop` - Long-term stop performance
+- `route_headway_baselines` - Dynamic headway thresholds per route
 
 
 ## Setup & Deployment
