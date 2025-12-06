@@ -67,10 +67,10 @@ This approach works with any transit agency data without requiring schedule reco
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │  RENDER - React Dashboard                               │
-│  • Interactive map (Leaflet + OSM tiles)               │
-│  • Real-time vehicle positions                         │
-│  • Color-coded bunching severity                       │
-│  • Stop and route analytics views                      │
+│  • Interactive map (Leaflet + OSM tiles)                │
+│  • Real-time vehicle positions                          │
+│  • Color-coded bunching severity                        │
+│  • Stop and route analytics views                       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -336,7 +336,7 @@ This is a portfolio project not currently accepting contributions. However, feel
 
 ## License
 
-MIT License - See LICENSE file for details
+Apache License 2.0 - See LICENSE file for details
 
 ## Contact
 
