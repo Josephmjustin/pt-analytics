@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 BODS_API_URL = "https://data.bus-data.dft.gov.uk/api/v1/gtfsrtdatafeed/"
 API_KEY = os.getenv("BODS_API_KEY")
-LIVERPOOL_BBOX = "53.418993289369965,53.44199101568962,-2.976103768216373,-2.876646486925741"
+# EXPANDED to cover full Liverpool metro area
+LIVERPOOL_BBOX = "53.35,53.48,-3.05,-2.80"
 
 feed = gtfs_realtime_pb2.FeedMessage()
 # parameters for BODS API request

@@ -19,8 +19,9 @@ DB_CONFIG = {
     'password': os.getenv('DB_PASSWORD')
 }
 
-# Liverpool bounding box
-BBOX = "53.418993289369965,-2.976103768216373,53.44199101568962,-2.876646486925741"
+# Liverpool bounding box - EXPANDED to cover full metro area
+# Format: south,west,north,east
+BBOX = "53.35,-3.05,53.48,-2.80"  # Full Liverpool metro
 
 def fetch_osm_stops():
     """Fetch bus stops from OSM Overpass API"""
