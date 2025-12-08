@@ -180,10 +180,9 @@ def get_stop_routes(stop_id: str):
             END as route_short_name,
             r.route_long_name,
             rhb.median_headway_minutes,
-            bs.avg_bunching_rate
+            NULL as avg_bunching_rate
         FROM route_headway_baselines rhb
         JOIN gtfs_routes r ON rhb.route_id = r.route_id
-        LEFT JOIN bunching_by_stop bs ON rhb.stop_id::TEXT = bs.stop_id::TEXT
         LEFT JOIN route_variants rv ON r.route_id = rv.route_id
         WHERE rhb.stop_id::TEXT = %s
         ORDER BY r.route_id, r.route_short_name
