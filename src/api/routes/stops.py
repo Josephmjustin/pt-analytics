@@ -145,10 +145,10 @@ def get_stop_routes(stop_id: str):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get routes from route_headway_baselines
+    # Get routes from route_headway_baselines with deduplication
     query = """
-        SELECT DISTINCT
-            rhb.route_id,
+        SELECT DISTINCT ON (r.route_id)
+            r.route_id,
             r.route_short_name,
             r.route_long_name,
             rhb.median_headway_minutes,
@@ -157,7 +157,7 @@ def get_stop_routes(stop_id: str):
         JOIN gtfs_routes r ON rhb.route_id = r.route_id
         LEFT JOIN bunching_by_stop bs ON rhb.stop_id::TEXT = bs.stop_id::TEXT
         WHERE rhb.stop_id::TEXT = %s
-        ORDER BY r.route_short_name
+        ORDER BY r.route_id, r.route_short_name
     """
     
     cur.execute(query, (stop_id,))
