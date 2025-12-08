@@ -141,21 +141,50 @@ def get_headway_summary():
 
 @router.get("/{stop_id}/routes")
 def get_stop_routes(stop_id: str):
-    """Get all routes passing through this stop with bunching scores"""
+    """Get all routes passing through this stop with bunching scores and variant labels"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get routes from route_headway_baselines with deduplication
+    # Get routes with stop counts to create variant labels
     query = """
+        WITH route_stop_counts AS (
+            SELECT 
+                r.route_id,
+                r.route_short_name,
+                COUNT(DISTINCT rhb.stop_id) as stop_count
+            FROM route_headway_baselines rhb
+            JOIN gtfs_routes r ON rhb.route_id = r.route_id
+            GROUP BY r.route_id, r.route_short_name
+        ),
+        route_variants AS (
+            SELECT 
+                route_id,
+                route_short_name,
+                stop_count,
+                ROW_NUMBER() OVER (PARTITION BY route_short_name ORDER BY stop_count DESC) as variant_num,
+                COUNT(*) OVER (PARTITION BY route_short_name) as variant_count
+            FROM route_stop_counts
+        )
         SELECT DISTINCT ON (r.route_id)
             r.route_id,
-            r.route_short_name,
+            CASE 
+                WHEN rv.variant_count > 1 THEN 
+                    r.route_short_name || ' (Variant ' || 
+                    CASE rv.variant_num 
+                        WHEN 1 THEN 'A' 
+                        WHEN 2 THEN 'B'
+                        WHEN 3 THEN 'C'
+                        ELSE rv.variant_num::TEXT 
+                    END || ' - ' || rv.stop_count || ' stops)'
+                ELSE r.route_short_name
+            END as route_short_name,
             r.route_long_name,
             rhb.median_headway_minutes,
             bs.avg_bunching_rate
         FROM route_headway_baselines rhb
         JOIN gtfs_routes r ON rhb.route_id = r.route_id
         LEFT JOIN bunching_by_stop bs ON rhb.stop_id::TEXT = bs.stop_id::TEXT
+        LEFT JOIN route_variants rv ON r.route_id = rv.route_id
         WHERE rhb.stop_id::TEXT = %s
         ORDER BY r.route_id, r.route_short_name
     """
