@@ -4,8 +4,8 @@ from src.api.database import get_db_connection
 router = APIRouter(prefix="/stops", tags=["stops"])
 
 @router.get("/")
-def get_all_stops():
-    """Get all stops with current bunching scores"""
+def get_all_stops(search: str = None, limit: int = 50):
+    """Get all stops with current bunching scores, with optional search"""
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -21,11 +21,17 @@ def get_all_stops():
         FROM bunching_by_stop bs
         LEFT JOIN osm_stops s ON bs.stop_name = s.name
         WHERE s.latitude IS NOT NULL
-        ORDER BY bs.stop_id, bs.avg_bunching_rate DESC
-        LIMIT 100
     """
     
-    cur.execute(query)
+    params = []
+    if search:
+        query += " AND LOWER(bs.stop_name) LIKE LOWER(%s)"
+        params.append(f"%{search}%")
+    
+    query += " ORDER BY bs.stop_id, bs.avg_bunching_rate DESC LIMIT %s"
+    params.append(limit)
+    
+    cur.execute(query, params)
     stops = cur.fetchall()
     
     cur.close()
