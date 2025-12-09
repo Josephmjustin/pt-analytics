@@ -1,11 +1,12 @@
 """
-Prefect Flow: PT Analytics Analysis Pipeline
+Prefect Flow: PT Analytics Complete Analysis Pipeline
 Runs every 10 minutes:
-1. Find stop events (vehicles stopped for 20+ seconds)
+1. Detect stop events (vehicles stopped 20+ seconds)
 2. Match to TransXChange stops
 3. Record arrivals
 4. Calculate bunching scores
-5. Mark positions as analyzed
+5. Aggregate to running averages
+6. Cleanup analyzed data
 """
 
 from prefect import flow, task
@@ -23,13 +24,16 @@ from src.processing.stop_detector import find_stop_events
 from src.processing.vehicle_matcher import match_vehicle_to_stop
 from src.api.database import get_db_connection
 
-# Import bunching calculation
+# Import scripts
 try:
     from calculate_bunching_from_arrivals import calculate_bunching_from_arrivals
-    HAS_BUNCHING_CALC = True
-except ImportError:
-    HAS_BUNCHING_CALC = False
-    print("Warning: calculate_bunching_from_arrivals not found")
+    from aggregate_scores import aggregate_scores
+    from aggregate_route_headways import aggregate_route_headways
+    from cleanup_old_data import cleanup_old_data
+    HAS_ALL_MODULES = True
+except ImportError as e:
+    HAS_ALL_MODULES = False
+    print(f"Warning: Missing module - {e}")
 
 @task(name="Detect Stop Events", retries=2, retry_delay_seconds=30)
 def detect_and_match_stops():
@@ -151,32 +155,83 @@ def detect_and_match_stops():
     
     return len(stop_events), matched_count
 
-@task(name="Calculate Bunching Scores", retries=2, retry_delay_seconds=30)
-def run_bunching_analysis():
+@task(name="Calculate Bunching", retries=2, retry_delay_seconds=30)
+def run_bunching_calculation():
     """Calculate bunching from vehicle arrivals"""
-    if not HAS_BUNCHING_CALC:
-        print("Skipping bunching calculation (module not available)")
+    if not HAS_ALL_MODULES:
+        print("Skipping - modules not available")
         return
     
-    print("Calculating bunching scores from arrivals...")
+    print("Calculating bunching scores...")
     calculate_bunching_from_arrivals()
-    print("Bunching calculation complete")
+    print("✓ Bunching calculated")
 
-@flow(name="PT Analytics - Analysis Pipeline (10min)")
+@task(name="Aggregate Patterns", retries=2, retry_delay_seconds=30)
+def run_aggregation():
+    """Aggregate bunching scores and route headways to running averages"""
+    if not HAS_ALL_MODULES:
+        print("Skipping - modules not available")
+        return
+    
+    print("Aggregating bunching scores...")
+    aggregate_scores()
+    
+    print("Aggregating route headways...")
+    aggregate_route_headways()
+    
+    print("✓ Aggregation complete")
+
+@task(name="Cleanup Data", retries=2, retry_delay_seconds=30)
+def run_cleanup():
+    """Cleanup analyzed vehicle positions and old arrivals"""
+    if not HAS_ALL_MODULES:
+        print("Skipping - modules not available")
+        return
+    
+    print("Cleaning up old data...")
+    cleanup_old_data()
+    
+    # Also cleanup old arrivals (keep last 1 hour for debugging)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        DELETE FROM vehicle_arrivals
+        WHERE timestamp < NOW() - INTERVAL '1 hour'
+    """)
+    deleted_arrivals = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    print(f"✓ Deleted {deleted_arrivals} old arrivals (kept last 1 hour)")
+
+@flow(name="PT Analytics - Complete Analysis (10min)")
 def analysis_pipeline():
-    """Analysis pipeline - runs every 10 minutes"""
-    print(f"[{datetime.now()}] Starting analysis pipeline...")
+    """Complete analysis pipeline - runs every 10 minutes"""
+    print(f"[{datetime.now()}] Starting complete analysis pipeline...")
+    print("="*60)
     
     # Step 1: Detect stops and match to TransXChange
     stop_events, matched = detect_and_match_stops()
+    print(f"Step 1 complete: {stop_events} stops detected, {matched} matched")
     
-    # Step 2: Calculate bunching if we have arrivals
-    if matched > 0:
-        run_bunching_analysis()
-    else:
-        print("No matched stops - skipping bunching calculation")
+    if matched == 0:
+        print("No matched stops - skipping remaining steps")
+        return
     
-    print(f"Pipeline complete: {stop_events} stops detected, {matched} matched")
+    # Step 2: Calculate bunching from arrivals
+    run_bunching_calculation()
+    
+    # Step 3: Aggregate to running averages
+    run_aggregation()
+    
+    # Step 4: Cleanup analyzed data
+    run_cleanup()
+    
+    print("="*60)
+    print(f"Pipeline complete at {datetime.now()}")
+    print(f"Summary: {stop_events} stops, {matched} matched and analyzed")
 
 if __name__ == "__main__":
     analysis_pipeline()

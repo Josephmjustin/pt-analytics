@@ -1,14 +1,12 @@
-"""
+"""  
 Prefect Deployment: Main Pipeline
-Runs ingestion (60s), analysis (5min), cleanup (10min), and aggregation (15min)
+Runs ingestion (10s) and complete analysis (10min)
 """
 import logging
 import os
 from prefect import serve
 from ingestion_flow import ingestion_pipeline
 from analysis_flow import analysis_pipeline
-from cleanup_flow import cleanup_pipeline
-from aggregation_flow import aggregation_pipeline
 
 # Suppress excessive Prefect logging
 logging.getLogger("prefect").setLevel(logging.WARNING)
@@ -24,37 +22,27 @@ if __name__ == "__main__":
         tags=["ingestion", "realtime"]
     )
     
-    # Analysis: every 10 minutes (process stop events)
+    # Complete Analysis: every 10 minutes
+    # (stop detection, matching, bunching calc, aggregation, cleanup)
     analysis_deployment = analysis_pipeline.to_deployment(
-        name="analysis-every-10min",
+        name="complete-analysis-every-10min",
         interval=600,
-        tags=["analytics", "bunching", "stop-detection"]
+        tags=["analytics", "bunching", "aggregation", "cleanup"]
     )
     
-    # Aggregation: every 10 minutes (before cleanup)
-    aggregation_deployment = aggregation_pipeline.to_deployment(
-        name="aggregation-every-10min",
-        interval=600,
-        tags=["aggregation", "patterns"]
-    )
-    
-    # Cleanup: every 15 minutes (after aggregation)
-    cleanup_deployment = cleanup_pipeline.to_deployment(
-        name="cleanup-every-15min",
-        interval=900,
-        tags=["maintenance", "cleanup"]
-    )
-    
-    # Serve all deployments
+    # Serve both deployments
     print("=" * 60)
     print("PT Analytics Pipeline Started")
     print("=" * 60)
-    print("Ingestion:   every 10 seconds (store positions)")
-    print("Analysis:    every 10 minutes (detect stops + match)")
-    print("Aggregation: every 10 minutes (learn patterns)")
-    print("Cleanup:     every 15 minutes (delete analyzed data)")
+    print("Ingestion: every 10 seconds (store positions)")
+    print("Analysis:  every 10 minutes (complete pipeline)")
+    print("  1. Detect stop events")
+    print("  2. Match to TransXChange stops")
+    print("  3. Calculate bunching")
+    print("  4. Aggregate to running averages")
+    print("  5. Cleanup analyzed data")
     print("=" * 60)
     print("Press Ctrl+C to stop cleanly")
     print("=" * 60)
     
-    serve(ingestion_deployment, analysis_deployment, cleanup_deployment, aggregation_deployment)
+    serve(ingestion_deployment, analysis_deployment)
