@@ -19,7 +19,7 @@ def get_all_stops(search: str = None, limit: int = 50):
             s.latitude,
             s.longitude
         FROM bunching_by_stop bs
-        LEFT JOIN osm_stops s ON bs.stop_name = s.name
+        LEFT JOIN txc_stops s ON bs.stop_id = s.naptan_id
         WHERE s.latitude IS NOT NULL
     """
     
@@ -39,9 +39,9 @@ def get_all_stops(search: str = None, limit: int = 50):
     
     return {"stops": stops, "count": len(stops)}
 
-@router.get("/all-osm")
-def get_all_osm_stops():
-    """Get ALL OSM stops in Liverpool bbox, with bunching data if available"""
+@router.get("/all-txc")
+def get_all_txc_stops():
+    """Get ALL TransXChange stops, with bunching data if available"""
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -54,18 +54,16 @@ def get_all_osm_stops():
             FROM bunching_by_stop
             ORDER BY stop_id, last_updated DESC
         )
-        SELECT DISTINCT ON (os.osm_id)
-            os.osm_id::TEXT as stop_id,
-            os.name as stop_name,
-            os.latitude,
-            os.longitude,
+        SELECT DISTINCT
+            ts.naptan_id as stop_id,
+            ts.stop_name,
+            ts.latitude,
+            ts.longitude,
             lb.avg_bunching_rate,
             lb.total_count
-        FROM osm_stops os
-        LEFT JOIN latest_bunching lb ON os.osm_id::TEXT = lb.stop_id::TEXT
-        WHERE os.latitude BETWEEN 53.35 AND 53.48
-          AND os.longitude BETWEEN -3.05 AND -2.85
-        ORDER BY os.osm_id
+        FROM txc_stops ts
+        LEFT JOIN latest_bunching lb ON ts.naptan_id = lb.stop_id
+        ORDER BY ts.naptan_id
     """
     
     cur.execute(query)
@@ -93,17 +91,12 @@ def get_stops_stats():
     """)
     stats = cur.fetchone()
     
-    # Active buses count (last 5 minutes)
-    from datetime import datetime, timedelta
-    cutoff_time = datetime.now() - timedelta(minutes=5)
-    
+    # Active arrivals count (last 10 minutes)
     cur.execute("""
         SELECT COUNT(DISTINCT vehicle_id) as active_buses
-        FROM vehicle_positions
-        WHERE timestamp >= %s
-            AND latitude BETWEEN 53.35 AND 53.48
-            AND longitude BETWEEN -3.05 AND -2.85
-    """, (cutoff_time,))
+        FROM vehicle_arrivals
+        WHERE timestamp >= NOW() - INTERVAL '10 minutes'
+    """)
     
     buses_result = cur.fetchone()
     
@@ -141,51 +134,24 @@ def get_headway_summary():
 
 @router.get("/{stop_id}/routes")
 def get_stop_routes(stop_id: str):
-    """Get all routes passing through this stop with bunching scores and variant labels"""
+    """Get all routes passing through this stop with bunching scores"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get routes with stop counts to create variant labels
+    # Get routes from TransXChange pattern_stops
     query = """
-        WITH route_stop_counts AS (
-            SELECT 
-                r.route_id,
-                r.route_short_name,
-                COUNT(DISTINCT rhb.stop_id) as stop_count
-            FROM route_headway_baselines rhb
-            JOIN gtfs_routes r ON rhb.route_id = r.route_id
-            GROUP BY r.route_id, r.route_short_name
-        ),
-        route_variants AS (
-            SELECT 
-                route_id,
-                route_short_name,
-                stop_count,
-                ROW_NUMBER() OVER (PARTITION BY route_short_name ORDER BY stop_count DESC) as variant_num,
-                COUNT(*) OVER (PARTITION BY route_short_name) as variant_count
-            FROM route_stop_counts
-        )
-        SELECT DISTINCT ON (r.route_id)
-            r.route_id,
-            CASE 
-                WHEN rv.variant_count > 1 THEN 
-                    r.route_short_name || ' (Variant ' || 
-                    CASE rv.variant_num 
-                        WHEN 1 THEN 'A' 
-                        WHEN 2 THEN 'B'
-                        WHEN 3 THEN 'C'
-                        ELSE rv.variant_num::TEXT 
-                    END || ' - ' || rv.stop_count || ' stops)'
-                ELSE r.route_short_name
-            END as route_short_name,
-            r.route_long_name,
-            rhb.median_headway_minutes,
+        SELECT DISTINCT
+            rp.service_code,
+            rp.route_name,
+            rp.operator_name,
+            rp.direction,
+            COUNT(DISTINCT ps.naptan_id) as stop_count,
             NULL as avg_bunching_rate
-        FROM route_headway_baselines rhb
-        JOIN gtfs_routes r ON rhb.route_id = r.route_id
-        LEFT JOIN route_variants rv ON r.route_id = rv.route_id
-        WHERE rhb.stop_id::TEXT = %s
-        ORDER BY r.route_id, r.route_short_name
+        FROM txc_pattern_stops ps
+        JOIN txc_route_patterns rp ON ps.service_code = rp.service_code
+        WHERE ps.naptan_id = %s
+        GROUP BY rp.service_code, rp.route_name, rp.operator_name, rp.direction
+        ORDER BY rp.route_name, rp.direction
     """
     
     cur.execute(query, (stop_id,))

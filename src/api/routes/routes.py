@@ -8,22 +8,20 @@ router = APIRouter(prefix="/routes", tags=["routes"])
 
 @router.get("/")
 def get_all_routes():
-    """Get all routes with headway baselines"""
+    """Get all routes from TransXChange"""
     conn = get_db_connection()
     cur = conn.cursor()
     
     query = """
         SELECT DISTINCT
-            r.route_id,
-            r.route_short_name,
-            r.route_long_name,
-            COUNT(DISTINCT rhb.stop_id) as stops_with_baseline,
-            ROUND(AVG(rhb.median_headway_minutes)::numeric, 1) as avg_median_headway
-        FROM gtfs_routes r
-        INNER JOIN route_headway_baselines rhb ON r.route_id = rhb.route_id
-        GROUP BY r.route_id, r.route_short_name, r.route_long_name
-        HAVING COUNT(DISTINCT rhb.stop_id) > 0
-        ORDER BY r.route_short_name
+            rp.route_name,
+            rp.operator_name,
+            COUNT(DISTINCT ps.naptan_id) as total_stops,
+            COUNT(DISTINCT rp.service_code) as variants
+        FROM txc_route_patterns rp
+        JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
+        GROUP BY rp.route_name, rp.operator_name
+        ORDER BY rp.route_name
     """
     
     cur.execute(query)
@@ -34,104 +32,99 @@ def get_all_routes():
     
     return {"routes": routes, "count": len(routes)}
 
-@router.get("/{route_id}")
-def get_route_details(route_id: str):
-    """Get route details with all stops and their headway baselines"""
+@router.get("/{route_name}")
+def get_route_details(route_name: str):
+    """Get route details with all service codes (variants) and stops"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Route info
+    # Get all service codes for this route
     cur.execute("""
-        SELECT route_id, route_short_name, route_long_name
-        FROM gtfs_routes
-        WHERE route_id = %s
-    """, (route_id,))
+        SELECT DISTINCT
+            service_code,
+            operator_name,
+            direction,
+            origin,
+            destination
+        FROM txc_route_patterns
+        WHERE route_name = %s
+        ORDER BY direction, service_code
+    """, (route_name,))
     
-    route_info = cur.fetchone()
+    variants = cur.fetchall()
     
-    if not route_info:
+    if not variants:
         cur.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Route not found")
     
-    # Get stops on this route with headway baselines
-    cur.execute("""
-        SELECT DISTINCT ON (rhb.stop_id)
-            rhb.stop_id,
-            rhb.stop_name,
-            rhb.median_headway_minutes,
-            rhb.avg_headway_minutes,
-            rhb.observation_count,
-            rhb.last_updated,
-            bs.avg_bunching_rate,
-            bs.total_count
-        FROM route_headway_baselines rhb
-        LEFT JOIN bunching_by_stop bs ON rhb.stop_id::TEXT = bs.stop_id::TEXT
-        WHERE rhb.route_id = %s
-        ORDER BY rhb.stop_id, rhb.last_updated DESC
-    """, (route_id,))
-    
-    stops = cur.fetchall()
-    
-    # Get route-level summary
-    cur.execute("""
-        SELECT 
-            COUNT(*) as total_baselines,
-            ROUND(AVG(median_headway_minutes)::numeric, 1) as avg_median_headway,
-            ROUND(MIN(median_headway_minutes)::numeric, 1) as min_headway,
-            ROUND(MAX(median_headway_minutes)::numeric, 1) as max_headway,
-            SUM(observation_count) as total_observations
-        FROM route_headway_baselines
-        WHERE route_id = %s
-    """, (route_id,))
-    
-    summary = cur.fetchone()
+    # Get stops for each variant
+    all_stops = []
+    for variant in variants:
+        cur.execute("""
+            SELECT 
+                ps.naptan_id,
+                ts.stop_name,
+                ps.stop_sequence,
+                bs.avg_bunching_rate,
+                bs.total_count
+            FROM txc_pattern_stops ps
+            JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
+            LEFT JOIN bunching_by_stop bs ON ps.naptan_id = bs.stop_id
+            WHERE ps.service_code = %s
+            ORDER BY ps.stop_sequence
+        """, (variant['service_code'],))
+        
+        stops = cur.fetchall()
+        all_stops.append({
+            'variant': variant,
+            'stops': stops
+        })
     
     cur.close()
     conn.close()
     
     return {
-        "route": route_info,
-        "stops": stops,
-        "stop_count": len(stops),
-        "summary": summary
+        "route_name": route_name,
+        "variants": all_stops,
+        "variant_count": len(variants)
     }
 
-@router.get("/{route_id}/csv")
-def download_route_csv(route_id: str):
+@router.get("/{route_name}/csv")
+def download_route_csv(route_name: str):
     """Download route details as CSV"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get route name
+    # Check if route exists
     cur.execute("""
-        SELECT route_short_name, route_long_name
-        FROM gtfs_routes
-        WHERE route_id = %s
-    """, (route_id,))
+        SELECT COUNT(*) as count
+        FROM txc_route_patterns
+        WHERE route_name = %s
+    """, (route_name,))
     
-    route_info = cur.fetchone()
-    if not route_info:
+    if cur.fetchone()['count'] == 0:
         cur.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Route not found")
     
-    # Get detailed stop data
+    # Get all stops for all variants
     cur.execute("""
-        SELECT DISTINCT ON (rhb.stop_id)
-            rhb.stop_id,
-            rhb.stop_name,
-            rhb.median_headway_minutes,
-            rhb.avg_headway_minutes,
-            rhb.observation_count,
-            rhb.last_updated,
+        SELECT 
+            rp.service_code,
+            rp.direction,
+            ps.stop_sequence,
+            ps.naptan_id,
+            ts.stop_name,
             bs.avg_bunching_rate,
-            bs.total_count as bunching_observations
-        FROM route_headway_baselines rhb
-        LEFT JOIN bunching_by_stop bs ON rhb.stop_id::TEXT = bs.stop_id::TEXT
-        WHERE rhb.route_id = %s
-        ORDER BY rhb.stop_id, rhb.last_updated DESC
-    """, (route_id,))
+            bs.total_count
+        FROM txc_route_patterns rp
+        JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
+        JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
+        LEFT JOIN bunching_by_stop bs ON ps.naptan_id = bs.stop_id
+        WHERE rp.route_name = %s
+        ORDER BY rp.service_code, ps.stop_sequence
+    """, (route_name,))
     
     stops = cur.fetchall()
     
@@ -144,32 +137,30 @@ def download_route_csv(route_id: str):
     
     # Write headers
     writer.writerow([
-        'Stop ID',
+        'Service Code',
+        'Direction',
+        'Stop Sequence',
+        'NaPTAN ID',
         'Stop Name',
-        'Median Headway (min)',
-        'Avg Headway (min)',
-        'Headway Observations',
-        'Last Updated',
         'Bunching Rate (%)',
-        'Bunching Observations'
+        'Observations'
     ])
     
     # Write data
     for stop in stops:
         writer.writerow([
-            stop['stop_id'],
+            stop['service_code'],
+            stop['direction'] or 'N/A',
+            stop['stop_sequence'],
+            stop['naptan_id'],
             stop['stop_name'],
-            stop['median_headway_minutes'] or 'N/A',
-            stop['avg_headway_minutes'] or 'N/A',
-            stop['observation_count'] or 0,
-            stop['last_updated'] or 'N/A',
             f"{stop['avg_bunching_rate']:.1f}" if stop['avg_bunching_rate'] else 'N/A',
-            stop['bunching_observations'] or 0
+            stop['total_count'] or 0
         ])
     
     output.seek(0)
     
-    filename = f"route_{route_info['route_short_name']}_analytics.csv"
+    filename = f"route_{route_name}_analytics.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),
