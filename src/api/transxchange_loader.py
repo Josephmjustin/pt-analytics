@@ -8,13 +8,21 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 import math
 
-# Global variables (loaded at startup)
+# Global variables (loaded on first use)
 TXC_DATA: Dict = {}
 STOPS: Dict = {}  # naptan_id -> {name, lat, lon}
 ROUTE_STOPS: Dict = {}  # route_name -> set of naptan_ids
 STOP_ROUTES: Dict = {}  # naptan_id -> list of {route_name, service_code, operator, direction}
+_loaded = False  # Flag to track if data is loaded
 
-def load_transxchange_data(json_path: str = "static/liverpool_transit_data_enriched.json"):
+def ensure_data_loaded():
+    """Lazy load data on first use"""
+    global _loaded
+    if not _loaded:
+        load_transxchange_data()
+        _loaded = True
+
+def load_transxchange_data(json_path: str = "/data/liverpool_transit_data_enriched.json"):
     """Load TransXChange JSON and build lookup indexes"""
     global TXC_DATA, STOPS, ROUTE_STOPS, STOP_ROUTES
     
@@ -78,6 +86,7 @@ def find_nearest_stop(lat: float, lon: float, route_name: Optional[str] = None, 
     
     Returns: (naptan_id, stop_data, distance_m) or None
     """
+    ensure_data_loaded()  # Lazy load data
     
     # Get valid stops for this route
     if route_name and route_name in ROUTE_STOPS:
@@ -103,16 +112,20 @@ def find_nearest_stop(lat: float, lon: float, route_name: Optional[str] = None, 
 
 def get_routes_at_stop(naptan_id: str) -> List[Dict]:
     """Get all routes serving a stop"""
+    ensure_data_loaded()  # Lazy load data
     return STOP_ROUTES.get(naptan_id, [])
 
 def does_route_serve_stop(route_name: str, naptan_id: str) -> bool:
     """Check if a route serves a specific stop"""
+    ensure_data_loaded()  # Lazy load data
     return route_name in ROUTE_STOPS and naptan_id in ROUTE_STOPS[route_name]
 
 def get_stop_info(naptan_id: str) -> Optional[Dict]:
     """Get stop information"""
+    ensure_data_loaded()  # Lazy load data
     return STOPS.get(naptan_id)
 
 def get_all_stops_for_route(route_name: str) -> Set[str]:
     """Get all stop NaPTAN IDs for a route"""
+    ensure_data_loaded()  # Lazy load data
     return ROUTE_STOPS.get(route_name, set())

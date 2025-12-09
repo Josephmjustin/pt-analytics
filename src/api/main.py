@@ -11,18 +11,11 @@ async def lifespan(app: FastAPI):
     import sys
     sys.stdout.flush()
     print("="*80, flush=True)
-    print("STARTING UP PT ANALYTICS API", flush=True)
-    print("="*80, flush=True)
-    try:
-        load_transxchange_data()
-        print("✓ TransXChange data loaded successfully!", flush=True)
-    except Exception as e:
-        print(f"✗ ERROR loading TransXChange data: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
+    print("PT ANALYTICS API STARTED", flush=True)
+    print("TransXChange data will load on first API request (lazy loading)", flush=True)
     print("="*80, flush=True)
     yield
-    # Shutdown (if needed)
+    # Shutdown
     print("Shutting down...", flush=True)
 
 app = FastAPI(title="PT Analytics API", version="1.0.0", lifespan=lifespan)
