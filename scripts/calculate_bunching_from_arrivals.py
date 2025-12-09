@@ -46,7 +46,6 @@ def calculate_bunching_from_arrivals():
                         )
                     ))/60 AS headway_minutes
                 FROM vehicle_arrivals
-                WHERE timestamp >= NOW() - INTERVAL '10 minutes'
                 ORDER BY route_name, naptan_id, timestamp
             ),
             route_stop_stats AS (
@@ -99,7 +98,7 @@ def calculate_bunching_from_arrivals():
             )
             SELECT 
                 rss.naptan_id AS stop_id,
-                (SELECT name FROM txc_stops WHERE naptan_id = rss.naptan_id) AS stop_name,
+                (SELECT stop_name FROM txc_stops WHERE naptan_id = rss.naptan_id) AS stop_name,
                 CASE 
                     WHEN measured_headways > 0 
                     THEN ROUND((bunched_arrivals::numeric / measured_headways * 100), 1)
