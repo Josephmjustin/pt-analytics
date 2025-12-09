@@ -1,16 +1,21 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from src.api.routes import stops, vehicles, routes
 from src.api.transxchange_loader import load_transxchange_data
 
-app = FastAPI(title="PT Analytics API", version="1.0.0")
-
-# Load TransXChange data at startup
-@app.on_event("startup")
-async def startup_event():
+# Lifespan context manager for startup/shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     print("Starting up...")
     load_transxchange_data()
     print("Ready!")
+    yield
+    # Shutdown (if needed)
+    print("Shutting down...")
+
+app = FastAPI(title="PT Analytics API", version="1.0.0", lifespan=lifespan)
 
 # CORS for frontend
 app.add_middleware(
