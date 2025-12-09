@@ -18,7 +18,7 @@ def load_transxchange_data(json_path: str = "static/liverpool_transit_data_enric
     """Load TransXChange JSON and build lookup indexes"""
     global TXC_DATA, STOPS, ROUTE_STOPS, STOP_ROUTES
     
-    print("Loading TransXChange data...")
+    print(f"Loading TransXChange data from {json_path}...", flush=True)
     
     with open(json_path, 'r', encoding='utf-8') as f:
         TXC_DATA = json.load(f)
@@ -53,9 +53,9 @@ def load_transxchange_data(json_path: str = "static/liverpool_transit_data_enric
                     'destination': route.get('description')
                 })
     
-    print(f"✓ Loaded {len(STOPS):,} stops")
-    print(f"✓ Loaded {len(ROUTE_STOPS):,} routes")
-    print(f"✓ Built lookup indexes")
+    print(f"✓ Loaded {len(STOPS):,} stops", flush=True)
+    print(f"✓ Loaded {len(ROUTE_STOPS):,} routes", flush=True)
+    print(f"✓ Built lookup indexes", flush=True)
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate distance in meters between two lat/lon points"""
