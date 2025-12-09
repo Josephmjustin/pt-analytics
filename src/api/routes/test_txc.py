@@ -47,8 +47,39 @@ def test_route_stops(route_name: str):
     if not stops:
         return {"error": "Route not found"}
     
+    # Check if our test stop is in there
+    test_stop = "2800S42023F"
+    has_test_stop = test_stop in stops
+    
     return {
         "route": route_name,
         "stop_count": len(stops),
-        "stops": list(stops)[:10]  # First 10 for brevity
+        "stops": list(stops)[:10],  # First 10 for brevity
+        "has_queen_square_stand_5": has_test_stop
+    }
+
+@router.get("/debug/route-variants/{route_name}")
+def debug_route_variants(route_name: str):
+    """Debug: Show all variants of a route"""
+    from src.api import transxchange_loader
+    transxchange_loader.ensure_data_loaded()
+    
+    variants = []
+    for op_name, op_data in transxchange_loader.TXC_DATA['operators'].items():
+        for route in op_data['routes']:
+            if route['route_name'] == route_name:
+                variants.append({
+                    'operator': op_name,
+                    'service_code': route['service_code'],
+                    'direction': route.get('direction'),
+                    'description': route.get('description'),
+                    'stop_count': len(route['stops']),
+                    'first_stops': route['stops'][:5],
+                    'has_stand_5': '2800S42023F' in route['stops']
+                })
+    
+    return {
+        'route_name': route_name,
+        'total_variants': len(variants),
+        'variants': variants
     }

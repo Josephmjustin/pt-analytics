@@ -18,14 +18,9 @@ _loaded = False  # Flag to track if data is loaded
 def ensure_data_loaded():
     """Lazy load data on first use"""
     global _loaded
-    print(f"ensure_data_loaded called, _loaded={_loaded}", flush=True)
     if not _loaded:
-        print("Loading data now...", flush=True)
         load_transxchange_data()
         _loaded = True
-        print(f"Data loaded! _loaded={_loaded}", flush=True)
-    else:
-        print("Data already loaded", flush=True)
 
 def load_transxchange_data(json_path: str = "/data/liverpool_transit_data_enriched.json"):
     """Load TransXChange JSON and build lookup indexes"""
@@ -33,16 +28,27 @@ def load_transxchange_data(json_path: str = "/data/liverpool_transit_data_enrich
     
     import os
     
-    # Check if running locally vs Docker
-    if not os.path.exists(json_path):
-        local_path = "static/liverpool_transit_data_enriched.json"
-        if os.path.exists(local_path):
-            json_path = local_path
-            print(f"Using local path: {json_path}", flush=True)
-        else:
-            print(f"ERROR: JSON file not found at {json_path} or {local_path}", flush=True)
-            raise FileNotFoundError(f"TransXChange data not found")
+    # Check if running locally vs Docker - try multiple paths
+    paths_to_try = [
+        json_path,  # Docker path: /data/...
+        "static/liverpool_transit_data_enriched.json",  # From root
+        "../static/liverpool_transit_data_enriched.json",  # From scripts/
+        os.path.join(os.path.dirname(__file__), '..', '..', 'static', 'liverpool_transit_data_enriched.json')  # Absolute
+    ]
     
+    found_path = None
+    for path in paths_to_try:
+        if os.path.exists(path):
+            found_path = path
+            break
+    
+    if not found_path:
+        print(f"ERROR: JSON file not found. Tried:", flush=True)
+        for path in paths_to_try:
+            print(f"  - {path}", flush=True)
+        raise FileNotFoundError(f"TransXChange data not found")
+    
+    json_path = found_path
     print(f"Loading TransXChange data from {json_path}...", flush=True)
     
     with open(json_path, 'r', encoding='utf-8') as f:

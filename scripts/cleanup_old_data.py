@@ -1,7 +1,10 @@
 """
-Data Retention: Clean up old vehicle positions after analysis
-Deletes all data before the last analysis run
-Keeps only data since last analysis for next run
+Data Retention: Clean up analyzed vehicle positions
+Deletes:
+1. Positions marked as analyzed=true
+2. Positions older than 15 minutes (safety cleanup)
+Keeps:
+- Unanalyzed positions (waiting for next analysis cycle)
 """
 
 import psycopg2
@@ -20,7 +23,7 @@ DB_CONFIG = {
 }
 
 def cleanup_old_data():
-    """Delete vehicle positions older than last analysis"""
+    """Delete analyzed vehicle positions and old data"""
     
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
@@ -30,36 +33,37 @@ def cleanup_old_data():
         cur.execute("SELECT COUNT(*) FROM vehicle_positions")
         before_count = cur.fetchone()[0]
         
-        # Get last analysis end time
-        cur.execute("""
-            SELECT MAX(data_window_end) 
-            FROM bunching_scores
-        """)
-        last_analysis = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM vehicle_positions WHERE analyzed = true")
+        analyzed_count = cur.fetchone()[0]
         
-        if not last_analysis:
-            print("No analysis runs found yet - skipping cleanup")
-            return
+        print(f"Current state: {before_count:,} total, {analyzed_count:,} analyzed")
         
-        print(f"Last analysis ended at: {last_analysis}")
-        
-        # Delete old data
+        # Delete analyzed positions
         cur.execute("""
             DELETE FROM vehicle_positions 
-            WHERE timestamp < %s
-        """, (last_analysis,))
+            WHERE analyzed = true
+        """)
+        deleted_analyzed = cur.rowcount
         
-        deleted = cur.rowcount
+        # Safety cleanup: delete positions older than 15 minutes (should be analyzed by now)
+        cur.execute("""
+            DELETE FROM vehicle_positions 
+            WHERE timestamp < NOW() - INTERVAL '15 minutes'
+        """)
+        deleted_old = cur.rowcount
+        
         conn.commit()
         
-        after_count = before_count - deleted
+        total_deleted = deleted_analyzed + deleted_old
+        after_count = before_count - total_deleted
         
-        print(f"Data cleanup complete:")
-        print(f"  Before: {before_count:,} positions")
-        print(f"  Deleted: {deleted:,} positions")
-        print(f"  Kept: {after_count:,} positions (since last analysis)")
+        print(f"Cleanup complete:")
+        print(f"  Deleted {deleted_analyzed:,} analyzed positions")
+        print(f"  Deleted {deleted_old:,} old (>15min) positions")
+        print(f"  Total deleted: {total_deleted:,}")
+        print(f"  Remaining: {after_count:,} positions (unanalyzed)")
         
-        # Show new size
+        # Show table size
         cur.execute("""
             SELECT pg_size_pretty(pg_total_relation_size('vehicle_positions'))
         """)
