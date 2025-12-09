@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from src.api.routes import stops, vehicles, routes
+from src.api.routes import stops, vehicles, routes, test_txc
 from src.api.transxchange_loader import load_transxchange_data
 
 # Lifespan context manager for startup/shutdown
@@ -33,6 +33,7 @@ app.add_middleware(
 app.include_router(stops.router)
 app.include_router(vehicles.router)
 app.include_router(routes.router)
+app.include_router(test_txc.router)
 
 @app.get("/")
 def root():
