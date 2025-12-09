@@ -23,10 +23,8 @@ def ingest_data():
 
 @flow(name="PT Analytics - Data Ingestion (10s)")
 def ingestion_pipeline():
-    """Data ingestion pipeline - runs every 10 seconds"""
-    while True:
-        ingest_data()
-        time.sleep(10)  # 10 second interval
+    """Data ingestion pipeline - runs every 10 seconds via Prefect schedule"""
+    ingest_data()
 
 if __name__ == "__main__":
     ingestion_pipeline()

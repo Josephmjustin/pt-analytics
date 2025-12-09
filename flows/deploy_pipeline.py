@@ -17,18 +17,18 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 os.environ["PREFECT_LOGGING_LEVEL"] = "WARNING"
 
 if __name__ == "__main__":
-    # Ingestion: every 60 seconds
+    # Ingestion: every 10 seconds (BODS API refresh rate)
     ingestion_deployment = ingestion_pipeline.to_deployment(
-        name="ingestion-every-60s",
-        interval=60,
+        name="ingestion-every-10s",
+        interval=10,
         tags=["ingestion", "realtime"]
     )
     
-    # Analysis: every 5 minutes
+    # Analysis: every 10 minutes (process stop events)
     analysis_deployment = analysis_pipeline.to_deployment(
-        name="analysis-every-5min",
-        interval=300,
-        tags=["analytics", "bunching"]
+        name="analysis-every-10min",
+        interval=600,
+        tags=["analytics", "bunching", "stop-detection"]
     )
     
     # Aggregation: every 10 minutes (before cleanup)
@@ -49,10 +49,10 @@ if __name__ == "__main__":
     print("=" * 60)
     print("PT Analytics Pipeline Started")
     print("=" * 60)
-    print("Ingestion:   every 60 seconds")
-    print("Analysis:    every 5 minutes")
+    print("Ingestion:   every 10 seconds (store positions)")
+    print("Analysis:    every 10 minutes (detect stops + match)")
     print("Aggregation: every 10 minutes (learn patterns)")
-    print("Cleanup:     every 15 minutes (delete old data)")
+    print("Cleanup:     every 15 minutes (delete analyzed data)")
     print("=" * 60)
     print("Press Ctrl+C to stop cleanly")
     print("=" * 60)
