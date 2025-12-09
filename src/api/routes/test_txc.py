@@ -15,10 +15,14 @@ router = APIRouter(prefix="/test-txc", tags=["test"])
 @router.get("/status")
 def txc_status():
     """Check if TransXChange data is loaded"""
+    from src.api import transxchange_loader
+    # Force load if not loaded
+    transxchange_loader.ensure_data_loaded()
     return {
-        "loaded": len(STOPS) > 0,
-        "total_stops": len(STOPS),
-        "total_routes": len(ROUTE_STOPS)
+        "loaded": len(transxchange_loader.STOPS) > 0,
+        "total_stops": len(transxchange_loader.STOPS),
+        "total_routes": len(transxchange_loader.ROUTE_STOPS),
+        "sample_routes": list(transxchange_loader.ROUTE_STOPS.keys())[:5]
     }
 
 @router.get("/stop/{naptan_id}")

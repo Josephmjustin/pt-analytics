@@ -18,13 +18,30 @@ _loaded = False  # Flag to track if data is loaded
 def ensure_data_loaded():
     """Lazy load data on first use"""
     global _loaded
+    print(f"ensure_data_loaded called, _loaded={_loaded}", flush=True)
     if not _loaded:
+        print("Loading data now...", flush=True)
         load_transxchange_data()
         _loaded = True
+        print(f"Data loaded! _loaded={_loaded}", flush=True)
+    else:
+        print("Data already loaded", flush=True)
 
 def load_transxchange_data(json_path: str = "/data/liverpool_transit_data_enriched.json"):
     """Load TransXChange JSON and build lookup indexes"""
     global TXC_DATA, STOPS, ROUTE_STOPS, STOP_ROUTES
+    
+    import os
+    
+    # Check if running locally vs Docker
+    if not os.path.exists(json_path):
+        local_path = "static/liverpool_transit_data_enriched.json"
+        if os.path.exists(local_path):
+            json_path = local_path
+            print(f"Using local path: {json_path}", flush=True)
+        else:
+            print(f"ERROR: JSON file not found at {json_path} or {local_path}", flush=True)
+            raise FileNotFoundError(f"TransXChange data not found")
     
     print(f"Loading TransXChange data from {json_path}...", flush=True)
     
