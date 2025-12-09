@@ -23,13 +23,13 @@ from src.processing.stop_detector import find_stop_events
 from src.processing.vehicle_matcher import match_vehicle_to_stop
 from src.api.database import get_db_connection
 
-# Import bunching calculation - skip if not available
+# Import bunching calculation
 try:
-    import calculate_bunching_scores_osm
+    from calculate_bunching_from_arrivals import calculate_bunching_from_arrivals
     HAS_BUNCHING_CALC = True
 except ImportError:
     HAS_BUNCHING_CALC = False
-    print("Warning: calculate_bunching_scores_osm not found, skipping bunching calculation")
+    print("Warning: calculate_bunching_from_arrivals not found")
 
 @task(name="Detect Stop Events", retries=2, retry_delay_seconds=30)
 def detect_and_match_stops():
@@ -153,14 +153,14 @@ def detect_and_match_stops():
 
 @task(name="Calculate Bunching Scores", retries=2, retry_delay_seconds=30)
 def run_bunching_analysis():
-    """Run bunching score calculation"""
+    """Calculate bunching from vehicle arrivals"""
     if not HAS_BUNCHING_CALC:
         print("Skipping bunching calculation (module not available)")
         return
     
-    print("Calculating bunching scores...")
-    calculate_bunching_scores_osm.calculate_bunching_scores_osm()
-    print("Bunching analysis complete")
+    print("Calculating bunching scores from arrivals...")
+    calculate_bunching_from_arrivals()
+    print("Bunching calculation complete")
 
 @flow(name="PT Analytics - Analysis Pipeline (10min)")
 def analysis_pipeline():
