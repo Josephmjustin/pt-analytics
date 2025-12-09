@@ -87,7 +87,8 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
     route_id = vehicle_position.get('route_id')
     lat = vehicle_position['latitude']
     lon = vehicle_position['longitude']
-    timestamp = vehicle_position['timestamp']
+    # Handle both 'timestamp' and 'stop_timestamp' keys
+    timestamp = vehicle_position.get('timestamp') or vehicle_position.get('stop_timestamp')
     
     route_name = get_route_name(route_id) if route_id else None
     
