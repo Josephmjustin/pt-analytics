@@ -1,7 +1,6 @@
 """
-Route Headway Baseline Aggregator
-Maintains running statistics of route-level headways
-This preserves route behavior patterns even after raw data cleanup
+Route Headway Baseline Aggregator - TransXChange Version with Hourly Patterns
+Calculates both overall and hour-specific baselines to handle peak/off-peak variations
 """
 
 import os
@@ -21,56 +20,36 @@ DB_CONFIG = {
 
 def aggregate_route_headways():
     """
-    Calculate and store route-level headway baselines.
-    Uses incremental averaging to maintain history.
+    Calculate and store route-level headway baselines from vehicle_arrivals.
+    Calculates BOTH overall baselines AND hourly baselines for peak/off-peak detection.
     """
     
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
     
     try:
-        print("Calculating route headway baselines...")
+        print("Calculating route headway baselines from vehicle_arrivals...")
         
-        # Calculate current headways from recent data
+        # Calculate OVERALL baselines (existing logic)
         cur.execute("""
-        WITH stop_arrivals AS (
+        WITH route_headways AS (
             SELECT 
-                vp.vehicle_id,
-                vp.route_id,
-                vp.timestamp as arrival_time,
-                os.osm_id as stop_id,
-                os.name as stop_name,
-                ST_Distance(vp.geom::geography, os.location::geography) as distance_meters,
-                ROW_NUMBER() OVER (
-                    PARTITION BY vp.vehicle_id, vp.route_id, os.osm_id 
-                    ORDER BY vp.timestamp
-                ) as ping_number
-            FROM vehicle_positions vp
-            JOIN osm_stops os 
-              ON ST_DWithin(vp.geom::geography, os.location::geography, 25)
-            WHERE vp.route_id IS NOT NULL
-        ),
-        arrivals_only AS (
-            SELECT *
-            FROM stop_arrivals
-            WHERE distance_meters < 25 AND ping_number = 1
-        ),
-        route_headways AS (
-            SELECT 
-                stop_id,
-                stop_name,
-                route_id,
+                va.naptan_id as stop_id,
+                ts.stop_name,
+                va.route_name,
                 EXTRACT(EPOCH FROM (
-                    arrival_time - LAG(arrival_time) OVER (
-                        PARTITION BY stop_id, route_id 
-                        ORDER BY arrival_time
+                    va.timestamp - LAG(va.timestamp) OVER (
+                        PARTITION BY va.naptan_id, va.route_name 
+                        ORDER BY va.timestamp
                     )
                 ))/60 as headway_minutes
-            FROM arrivals_only
+            FROM vehicle_arrivals va
+            JOIN txc_stops ts ON va.naptan_id = ts.naptan_id
+            WHERE va.timestamp >= NOW() - INTERVAL '30 minutes'
         ),
         current_stats AS (
             SELECT 
-                route_id,
+                route_name,
                 stop_id,
                 stop_name,
                 PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY headway_minutes) as median_headway,
@@ -78,9 +57,10 @@ def aggregate_route_headways():
                 COUNT(*) as new_observations
             FROM route_headways
             WHERE headway_minutes IS NOT NULL
-              AND headway_minutes > 0
-            GROUP BY route_id, stop_id, stop_name
-            HAVING COUNT(*) >= 1  -- Accept single observations to build baselines faster
+              AND headway_minutes > 1      -- Must be > 1 minute
+              AND headway_minutes < 60     -- Must be < 60 minutes (realistic service)
+            GROUP BY route_name, stop_id, stop_name
+            HAVING COUNT(*) >= 2  -- Need at least 2 valid headways
         )
         INSERT INTO route_headway_baselines (
             route_id, stop_id, stop_name,
@@ -88,7 +68,7 @@ def aggregate_route_headways():
             observation_count, last_updated
         )
         SELECT 
-            route_id,
+            route_name as route_id,
             stop_id,
             stop_name,
             median_headway,
@@ -97,17 +77,76 @@ def aggregate_route_headways():
             NOW()
         FROM current_stats
         ON CONFLICT (route_id, stop_id) DO UPDATE SET
-            -- Running average with exponential weighting (70% old, 30% new)
             median_headway_minutes = route_headway_baselines.median_headway_minutes * 0.7 + EXCLUDED.median_headway_minutes * 0.3,
             avg_headway_minutes = route_headway_baselines.avg_headway_minutes * 0.7 + EXCLUDED.avg_headway_minutes * 0.3,
             observation_count = route_headway_baselines.observation_count + EXCLUDED.observation_count,
             last_updated = NOW()
         """)
         
-        updated = cur.rowcount
+        overall_updated = cur.rowcount
         conn.commit()
         
-        # Show summary
+        # Calculate HOURLY baselines (new logic)
+        print("Calculating hourly baselines...")
+        cur.execute("""
+        WITH route_headways_hourly AS (
+            SELECT 
+                va.naptan_id as stop_id,
+                ts.stop_name,
+                va.route_name,
+                EXTRACT(HOUR FROM va.timestamp) as hour_of_day,
+                EXTRACT(EPOCH FROM (
+                    va.timestamp - LAG(va.timestamp) OVER (
+                        PARTITION BY va.naptan_id, va.route_name, EXTRACT(HOUR FROM va.timestamp)
+                        ORDER BY va.timestamp
+                    )
+                ))/60 as headway_minutes
+            FROM vehicle_arrivals va
+            JOIN txc_stops ts ON va.naptan_id = ts.naptan_id
+            WHERE va.timestamp >= NOW() - INTERVAL '7 days'  -- Look at last week for hourly patterns
+        ),
+        hourly_stats AS (
+            SELECT 
+                route_name,
+                stop_id,
+                stop_name,
+                hour_of_day,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY headway_minutes) as median_headway,
+                AVG(headway_minutes) as avg_headway,
+                COUNT(*) as new_observations
+            FROM route_headways_hourly
+            WHERE headway_minutes IS NOT NULL
+              AND headway_minutes > 1
+              AND headway_minutes < 60
+            GROUP BY route_name, stop_id, stop_name, hour_of_day
+            HAVING COUNT(*) >= 2
+        )
+        INSERT INTO route_headway_baselines_hourly (
+            route_id, stop_id, stop_name, hour_of_day,
+            median_headway_minutes, avg_headway_minutes, 
+            observation_count, last_updated
+        )
+        SELECT 
+            route_name as route_id,
+            stop_id,
+            stop_name,
+            hour_of_day::INTEGER,
+            median_headway,
+            avg_headway,
+            new_observations,
+            NOW()
+        FROM hourly_stats
+        ON CONFLICT (route_id, stop_id, hour_of_day) DO UPDATE SET
+            median_headway_minutes = route_headway_baselines_hourly.median_headway_minutes * 0.7 + EXCLUDED.median_headway_minutes * 0.3,
+            avg_headway_minutes = route_headway_baselines_hourly.avg_headway_minutes * 0.7 + EXCLUDED.avg_headway_minutes * 0.3,
+            observation_count = route_headway_baselines_hourly.observation_count + EXCLUDED.observation_count,
+            last_updated = NOW()
+        """)
+        
+        hourly_updated = cur.rowcount
+        conn.commit()
+        
+        # Show summary for overall baselines
         cur.execute("""
             SELECT 
                 COUNT(*) as total_baselines,
@@ -119,16 +158,36 @@ def aggregate_route_headways():
         """)
         stats = cur.fetchone()
         
-        print(f"SUCCESS: Updated {updated} route-stop baselines")
+        print(f"\n✓ Overall baselines: Updated {overall_updated}")
         if stats and stats[0] > 0:
-            print(f"\nBaseline summary:")
-            print(f"  Total baselines: {stats[0]}")
-            print(f"  Unique routes: {stats[1]}")
-            print(f"  Avg median headway: {stats[2]} min")
-            print(f"  Range: {stats[3]} - {stats[4]} min")
+            print(f"  Total: {stats[0]} baselines")
+            print(f"  Routes: {stats[1]} unique routes")
+            print(f"  Avg headway: {stats[2]} min (range: {stats[3]}-{stats[4]} min)")
+        
+        # Show summary for hourly baselines
+        cur.execute("""
+            SELECT 
+                COUNT(*) as total_baselines,
+                COUNT(DISTINCT route_id) as unique_routes,
+                COUNT(DISTINCT hour_of_day) as unique_hours,
+                ROUND(AVG(median_headway_minutes)::numeric, 1) as avg_median
+            FROM route_headway_baselines_hourly
+        """)
+        hourly_stats = cur.fetchone()
+        
+        print(f"\n✓ Hourly baselines: Updated {hourly_updated}")
+        if hourly_stats and hourly_stats[0] > 0:
+            print(f"  Total: {hourly_stats[0]} hour-specific baselines")
+            print(f"  Routes: {hourly_stats[1]} unique routes")
+            print(f"  Hours covered: {hourly_stats[2]}/24")
+            print(f"  Avg headway: {hourly_stats[3]} min")
+        else:
+            print("  No hourly baselines yet (need more data)")
         
     except Exception as e:
         print(f"Error aggregating route headways: {e}")
+        import traceback
+        traceback.print_exc()
         conn.rollback()
         raise
     finally:

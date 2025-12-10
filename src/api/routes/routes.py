@@ -9,21 +9,21 @@ router = APIRouter(prefix="/routes", tags=["routes"])
 
 @router.get("/")
 def get_all_routes():
-    """Get all routes from TransXChange with unique IDs"""
+    """Get all unique routes (operator-agnostic for bunching)"""
     conn = get_db_connection()
     cur = conn.cursor()
     
     query = """
         SELECT DISTINCT
-            CONCAT(rp.route_name, '|', rp.operator_name) as route_id,
+            rp.route_name as route_id,
             rp.route_name,
-            rp.operator_name,
+            STRING_AGG(DISTINCT rp.operator_name, ', ') as operators,
             COUNT(DISTINCT ps.naptan_id) as total_stops,
             COUNT(DISTINCT rp.service_code) as variants
         FROM txc_route_patterns rp
         JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
-        GROUP BY rp.route_name, rp.operator_name
-        ORDER BY rp.route_name, rp.operator_name
+        GROUP BY rp.route_name
+        ORDER BY rp.route_name
     """
     
     cur.execute(query)
@@ -34,19 +34,13 @@ def get_all_routes():
     
     return {"routes": routes, "count": len(routes)}
 
-@router.get("/{route_id:path}")
+@router.get("/{route_id}")
 def get_route_details(route_id: str):
-    """Get route details with all service codes (variants) and stops"""
-    # Decode route_id (format: "route_name|operator_name")
-    try:
-        route_name, operator_name = route_id.split('|', 1)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid route_id format. Expected: route_name|operator_name")
-    
+    """Get route details with all operators and variants"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get all service codes for this route + operator
+    # Get all service codes for this route (all operators)
     cur.execute("""
         SELECT DISTINCT
             service_code,
@@ -55,9 +49,9 @@ def get_route_details(route_id: str):
             origin,
             destination
         FROM txc_route_patterns
-        WHERE route_name = %s AND operator_name = %s
-        ORDER BY direction, service_code
-    """, (route_name, operator_name))
+        WHERE route_name = %s
+        ORDER BY operator_name, direction, service_code
+    """, (route_id,))
     
     variants = cur.fetchall()
     
@@ -93,40 +87,72 @@ def get_route_details(route_id: str):
     conn.close()
     
     return {
-        "route_name": route_name,
-        "operator_name": operator_name,
+        "route_name": route_id,
+        "operators": list(set([v['operator_name'] for v in variants])),
         "variants": all_stops,
         "variant_count": len(variants)
     }
 
-@router.get("/{route_id:path}/csv")
-def download_route_csv(route_id: str):
-    """Download route details as CSV"""
-    # Decode route_id
-    try:
-        route_name, operator_name = route_id.split('|', 1)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid route_id format")
+@router.get("/{route_id}/stops-with-bunching")
+def get_route_stops_with_bunching(route_id: str, hour: int = None):
+    """Get all stops on route with bunching scores (operator-agnostic)"""
+    from datetime import datetime
+    
+    if hour is None:
+        hour = datetime.now().hour
     
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Check if route exists
+    # Get stops with bunching (all operators combined)
     cur.execute("""
-        SELECT COUNT(*) as count
-        FROM txc_route_patterns
-        WHERE route_name = %s AND operator_name = %s
-    """, (route_name, operator_name))
+        SELECT 
+            MIN(ps.stop_sequence) as stop_sequence,
+            ps.naptan_id,
+            MAX(ts.stop_name) as stop_name,
+            MAX(ts.latitude) as latitude,
+            MAX(ts.longitude) as longitude,
+            MAX(brsh.bunching_rate_pct) as bunching_rate_pct,
+            MAX(brsh.expected_headway_minutes) as expected_headway_minutes,
+            STRING_AGG(DISTINCT rp.operator_name, ', ') as operators
+        FROM txc_route_patterns rp
+        JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
+        JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
+        LEFT JOIN bunching_by_route_stop_hour brsh 
+            ON brsh.route_id = rp.route_name 
+            AND brsh.stop_id = ps.naptan_id
+            AND brsh.hour_of_day = %s
+        WHERE rp.route_name = %s
+        GROUP BY ps.naptan_id
+        ORDER BY MIN(ps.stop_sequence)
+    """, (hour, route_id))
     
-    if cur.fetchone()['count'] == 0:
-        cur.close()
-        conn.close()
-        raise HTTPException(status_code=404, detail="Route not found")
+    stops = cur.fetchall()
     
-    # Get all stops for all variants
+    cur.close()
+    conn.close()
+    
+    if not stops:
+        raise HTTPException(status_code=404, detail="No stops found for this route")
+    
+    return {
+        "route_name": route_id,
+        "hour": hour,
+        "stops": stops,
+        "total_stops": len(stops)
+    }
+
+@router.get("/{route_id}/csv")
+def download_route_csv(route_id: str):
+    """Download route details as CSV (all operators)"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get all stops for all operators
     cur.execute("""
         SELECT 
             rp.service_code,
+            rp.operator_name,
             rp.direction,
             ps.stop_sequence,
             ps.naptan_id,
@@ -137,9 +163,9 @@ def download_route_csv(route_id: str):
         JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
         JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
         LEFT JOIN bunching_by_stop bs ON ps.naptan_id = bs.stop_id
-        WHERE rp.route_name = %s AND rp.operator_name = %s
-        ORDER BY rp.service_code, ps.stop_sequence
-    """, (route_name, operator_name))
+        WHERE rp.route_name = %s
+        ORDER BY rp.operator_name, rp.service_code, ps.stop_sequence
+    """, (route_id,))
     
     stops = cur.fetchall()
     
@@ -153,6 +179,7 @@ def download_route_csv(route_id: str):
     # Write headers
     writer.writerow([
         'Service Code',
+        'Operator',
         'Direction',
         'Stop Sequence',
         'NaPTAN ID',
@@ -165,6 +192,7 @@ def download_route_csv(route_id: str):
     for stop in stops:
         writer.writerow([
             stop['service_code'],
+            stop['operator_name'],
             stop['direction'] or 'N/A',
             stop['stop_sequence'],
             stop['naptan_id'],
@@ -175,7 +203,7 @@ def download_route_csv(route_id: str):
     
     output.seek(0)
     
-    filename = f"route_{route_name}_{operator_name}_analytics.csv"
+    filename = f"route_{route_id}_analytics.csv"
     
     return StreamingResponse(
         iter([output.getvalue()]),

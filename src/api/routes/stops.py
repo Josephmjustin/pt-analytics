@@ -132,6 +132,119 @@ def get_headway_summary():
     
     return summary or {}
 
+@router.get("/{stop_id}/routes-bunching")
+def get_stop_routes_with_bunching(stop_id: str, hour: int = None):
+    """
+    Get routes serving this stop with CURRENT HOUR bunching scores.
+    Used for real-time passenger information displays.
+    
+    If hour not provided, uses current hour.
+    Returns route-specific bunching for the specified hour.
+    """
+    from datetime import datetime
+    
+    if hour is None:
+        hour = datetime.now().hour
+    
+    if hour < 0 or hour > 23:
+        raise HTTPException(status_code=400, detail="Hour must be between 0 and 23")
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get stop info
+    cur.execute("""
+        SELECT naptan_id, stop_name, latitude, longitude
+        FROM txc_stops
+        WHERE naptan_id = %s
+    """, (stop_id,))
+    
+    stop_info = cur.fetchone()
+    
+    if not stop_info:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Stop not found")
+    
+    # Get routes with hour-specific bunching scores
+    cur.execute("""
+        SELECT DISTINCT
+            rp.route_name,
+            rp.operator_name,
+            rp.direction,
+            rp.origin,
+            rp.destination,
+            brsh.bunching_rate_pct,
+            brsh.expected_headway_minutes,
+            brsh.observation_count,
+            brsh.last_updated
+        FROM txc_pattern_stops ps
+        JOIN txc_route_patterns rp ON ps.service_code = rp.service_code
+        LEFT JOIN bunching_by_route_stop_hour brsh 
+            ON brsh.route_id = rp.route_name 
+            AND brsh.stop_id = ps.naptan_id
+            AND brsh.hour_of_day = %s
+        WHERE ps.naptan_id = %s
+        ORDER BY rp.route_name, rp.direction
+    """, (hour, stop_id))
+    
+    routes = cur.fetchall()
+    
+    cur.close()
+    conn.close()
+    
+    return {
+        "stop": stop_info,
+        "hour": hour,
+        "routes": routes,
+        "route_count": len(routes)
+    }
+
+@router.get("/{stop_id}/route/{route_id}/hourly-pattern")
+def get_stop_route_hourly_pattern(stop_id: str, route_id: str):
+    """
+    Get 24-hour bunching pattern for a specific route at a specific stop.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get stop info
+    cur.execute("""
+        SELECT naptan_id, stop_name
+        FROM txc_stops
+        WHERE naptan_id = %s
+    """, (stop_id,))
+    
+    stop_info = cur.fetchone()
+    
+    if not stop_info:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Stop not found")
+    
+    # Get hourly pattern
+    cur.execute("""
+        SELECT 
+            hour_of_day,
+            bunching_rate_pct,
+            expected_headway_minutes,
+            observation_count
+        FROM bunching_by_route_stop_hour
+        WHERE route_id = %s AND stop_id = %s
+        ORDER BY hour_of_day
+    """, (route_id, stop_id))
+    
+    hourly_data = cur.fetchall()
+    
+    cur.close()
+    conn.close()
+    
+    return {
+        "stop": stop_info,
+        "route_id": route_id,
+        "hourly_pattern": hourly_data
+    }
+
 @router.get("/{stop_id}/routes")
 def get_stop_routes(stop_id: str):
     """Get all routes passing through this stop with bunching scores"""
@@ -164,23 +277,43 @@ def get_stop_routes(stop_id: str):
 
 @router.get("/{stop_id}")
 def get_stop_details(stop_id: str):
-    """Get detailed analytics for a specific stop"""
+    """Get detailed analytics for a specific stop (even if no bunching data)"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Overall stats
+    # Get stop basic info from txc_stops first
     cur.execute("""
-        SELECT stop_id, stop_name, avg_bunching_rate, total_count, last_updated
-        FROM bunching_by_stop
-        WHERE stop_id = %s
+        SELECT naptan_id as stop_id, stop_name
+        FROM txc_stops
+        WHERE naptan_id = %s
     """, (stop_id,))
     
-    stop_info = cur.fetchone()
+    stop_basic = cur.fetchone()
     
-    if not stop_info:
+    if not stop_basic:
         cur.close()
         conn.close()
         raise HTTPException(status_code=404, detail="Stop not found")
+    
+    # Try to get bunching stats if available
+    cur.execute("""
+        SELECT avg_bunching_rate, total_count, last_updated
+        FROM bunching_by_stop
+        WHERE stop_id = %s
+        ORDER BY last_updated DESC
+        LIMIT 1
+    """, (stop_id,))
+    
+    bunching_stats = cur.fetchone()
+    
+    # Combine basic info with bunching stats
+    stop_info = dict(stop_basic)
+    if bunching_stats:
+        stop_info.update(bunching_stats)
+    else:
+        stop_info['avg_bunching_rate'] = None
+        stop_info['total_count'] = 0
+        stop_info['last_updated'] = None
     
     # Hourly pattern
     cur.execute("""
