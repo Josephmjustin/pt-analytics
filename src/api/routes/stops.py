@@ -170,7 +170,10 @@ def get_stop_routes_with_bunching(stop_id: str, hour: int = None):
     cur.execute("""
         SELECT DISTINCT
             rp.route_name,
-            rp.operator_name,
+            CASE 
+                WHEN rp.operator_name = 'Ribble Motor Services Ltd' THEN 'Stagecoach'
+                ELSE rp.operator_name
+            END as operator_name,
             rp.direction,
             rp.origin,
             rp.destination,
@@ -256,7 +259,10 @@ def get_stop_routes(stop_id: str):
         SELECT DISTINCT
             rp.service_code,
             rp.route_name,
-            rp.operator_name,
+            CASE 
+                WHEN rp.operator_name = 'Ribble Motor Services Ltd' THEN 'Stagecoach'
+                ELSE rp.operator_name
+            END as operator_name,
             rp.direction,
             COUNT(DISTINCT ps.naptan_id) as stop_count,
             NULL as avg_bunching_rate
