@@ -101,7 +101,7 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
             'matched': False
         }
     
-    nearest = find_nearest_stop_for_route(lat, lon, route_name, radius_m=10.0)
+    nearest = find_nearest_stop_for_route(lat, lon, route_name, radius_m=30.0)
     
     if not nearest:
         return {
