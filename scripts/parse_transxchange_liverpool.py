@@ -1,6 +1,7 @@
 """
 Parse TransXChange files and create efficient structure with stops database
 Separates stops (with lat/lon) from route patterns to avoid duplication
+OPTIMIZED: Multiprocessing for 9600+ files
 """
 
 import os
@@ -8,6 +9,7 @@ import xml.etree.ElementTree as ET
 import json
 from pathlib import Path
 from collections import defaultdict
+from multiprocessing import Pool, cpu_count
 
 # TransXChange namespace
 NS = {'txc': 'http://www.transxchange.org.uk/'}
@@ -33,6 +35,15 @@ def parse_operator_info(root):
 def is_liverpool_stop(naptan_id):
     """Check if stop is in Liverpool area (NaPTAN prefix 2800)"""
     return naptan_id.startswith('2800')
+
+def parse_file_wrapper(xml_path):
+    """
+    Wrapper for multiprocessing - each process has its own stops dict
+    Returns: (stops_dict, routes_list)
+    """
+    local_stops = {}
+    routes = parse_transxchange_file(xml_path, local_stops)
+    return (local_stops, routes)
 
 def parse_transxchange_file(xml_path, global_stops):
     """
@@ -146,6 +157,9 @@ def parse_transxchange_file(xml_path, global_stops):
                     # Only include routes that have Liverpool stops
                     if stop_sequence:
                         route_desc = None
+                        origin_stop = stop_sequence[0] if stop_sequence else None
+                        destination_stop = stop_sequence[-1] if stop_sequence else None
+                        
                         if direction == 'outbound' and outbound_desc is not None:
                             route_desc = outbound_desc.text
                         elif direction == 'inbound' and inbound_desc is not None:
@@ -157,6 +171,8 @@ def parse_transxchange_file(xml_path, global_stops):
                             'service_code': service_code.text,
                             'direction': direction,
                             'description': route_desc,
+                            'origin': origin_stop,
+                            'destination': destination_stop,
                             'stops': stop_sequence  # Just NaPTAN IDs now
                         })
         
@@ -168,43 +184,59 @@ def parse_transxchange_file(xml_path, global_stops):
 
 def process_all_files(input_dir, output_json):
     """
-    Process all TransXChange files and organize by operator
+    Process all TransXChange files using multiprocessing
     Separate stops database to avoid duplication
     """
-    global_stops = {}  # naptan_id -> {name, lat, lon}
-    operators_data = defaultdict(lambda: {'routes': []})
     
-    file_count = 0
+    # Step 1: Collect all XML file paths
+    print("Collecting XML files...")
+    xml_files = []
     for root_dir, dirs, files in os.walk(input_dir):
         for filename in files:
             if filename.endswith('.xml'):
-                xml_path = os.path.join(root_dir, filename)
-                file_count += 1
-                
-                if file_count % 100 == 0:
-                    print(f"Processed {file_count} files...")
-                
-                routes_data = parse_transxchange_file(xml_path, global_stops)
-                
-                for route in routes_data:
-                    op_name = route['operator']['short_name']
-                    op_noc = route['operator']['noc']
-                    
-                    # Initialize operator if first time
-                    if not operators_data[op_name].get('noc'):
-                        operators_data[op_name]['noc'] = op_noc
-                        operators_data[op_name]['full_name'] = route['operator']['full_name']
-                    
-                    # Add route (stops are just IDs now)
-                    operators_data[op_name]['routes'].append({
-                        'route_name': route['route_name'],
-                        'service_code': route['service_code'],
-                        'direction': route['direction'],
-                        'description': route['description'],
-                        'stops': route['stops']  # List of NaPTAN IDs
-                    })
+                xml_files.append(os.path.join(root_dir, filename))
     
-    print(f"\nProcessed {file_count} XML files")
+    total_files = len(xml_files)
+    print(f"Found {total_files} XML files")
+    
+    if total_files == 0:
+        print("No XML files found!")
+        return
+    
+    # Step 2: Process files in parallel
+    print(f"\nProcessing with {cpu_count()} CPU cores...")
+    
+    with Pool(cpu_count()) as pool:
+        # Use shared dict for stops (not ideal, but works)
+        results = pool.map(parse_file_wrapper, xml_files)
+    
+    # Step 3: Merge results
+    print("\nMerging results...")
+    global_stops = {}
+    operators_data = defaultdict(lambda: {'routes': []})
+    
+    for stops_dict, routes_list in results:
+        # Merge stops
+        global_stops.update(stops_dict)
+        
+        # Merge routes
+        for route in routes_list:
+            op_name = route['operator']['short_name']
+            op_noc = route['operator']['noc']
+            
+            if not operators_data[op_name].get('noc'):
+                operators_data[op_name]['noc'] = op_noc
+                operators_data[op_name]['full_name'] = route['operator']['full_name']
+            
+            operators_data[op_name]['routes'].append({
+                'route_name': route['route_name'],
+                'service_code': route['service_code'],
+                'direction': route['direction'],
+                'description': route['description'],
+                'origin': route['origin'],
+                'destination': route['destination'],
+                'stops': route['stops']
+            })
     
     # Build final structure
     output = {
