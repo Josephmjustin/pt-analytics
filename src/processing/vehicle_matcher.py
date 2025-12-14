@@ -84,15 +84,13 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
     """Match vehicle to nearest valid stop for its route"""
     
     vehicle_id = vehicle_position['vehicle_id']
-    route_id = vehicle_position.get('route_id')
     lat = vehicle_position['latitude']
     lon = vehicle_position['longitude']
     # Handle both 'timestamp' and 'stop_timestamp' keys
     timestamp = vehicle_position.get('timestamp') or vehicle_position.get('stop_timestamp')
-    # Get direction from SIRI-VM data
+    # Get route_name and direction directly from SIRI-VM data
+    route_name = vehicle_position.get('route_name')
     direction = vehicle_position.get('direction')
-    
-    route_name = get_route_name(route_id) if route_id else None
     
     if not route_name:
         return {

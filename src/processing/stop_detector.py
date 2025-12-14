@@ -10,10 +10,10 @@ def find_stop_events(vehicle_positions):
     A stop event = vehicle at same location (lat/lon) for 2+ consecutive timestamps
     
     Args:
-        vehicle_positions: List of dicts with vehicle_id, timestamp, lat, lon, route_id
+        vehicle_positions: List of dicts with vehicle_id, timestamp, lat, lon, route_id, route_name, direction
     
     Returns:
-        List of stop events with dwell time
+        List of stop events with dwell time, route_name, and direction
     """
     if not vehicle_positions:
         return []
@@ -39,6 +39,8 @@ def find_stop_events(vehicle_positions):
             current_lon = positions[i]['longitude']
             current_ts = positions[i]['timestamp']
             route_id = positions[i].get('route_id')
+            route_name = positions[i].get('route_name')
+            direction = positions[i].get('direction')
             
             # Count consecutive positions at SAME location (within 5 meters)
             dwell_count = 1
@@ -62,6 +64,8 @@ def find_stop_events(vehicle_positions):
                 stops.append({
                     'vehicle_id': vehicle_id,
                     'route_id': route_id,
+                    'route_name': route_name,
+                    'direction': direction,
                     'latitude': current_lat,
                     'longitude': current_lon,
                     'stop_timestamp': current_ts,  # First timestamp of stop
