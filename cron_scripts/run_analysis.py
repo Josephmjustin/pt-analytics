@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Standalone analysis script for cron
-Runs complete analysis pipeline:
+Runs complete analysis pipeline with SIRI-VM direction support:
 1. Detect stops & match to TransXChange
-2. Calculate bunching
+2. Calculate bunching (with direction)
 3. Aggregate to running averages
 4. Cleanup old data
 """
@@ -22,10 +22,10 @@ from src.api.database import get_db_connection
 from psycopg2.extras import execute_batch, RealDictCursor
 
 try:
-    from calculate_bunching_from_arrivals import calculate_bunching_from_arrivals
-    from aggregate_scores import aggregate_scores
-    from aggregate_route_headways import aggregate_route_headways
-    from cleanup_old_data import cleanup_old_data
+    from scripts.calculate_bunching_from_arrivals import calculate_bunching_from_arrivals
+    from scripts.aggregate_scores import aggregate_scores
+    from scripts.aggregate_route_headways import aggregate_route_headways
+    from scripts.cleanup_old_data import cleanup_old_data
     HAS_ALL_MODULES = True
 except ImportError as e:
     HAS_ALL_MODULES = False
@@ -36,10 +36,14 @@ def detect_and_match_stops():
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
+    # Fetch unanalyzed positions with direction from SIRI-VM
     cur.execute("""
         SELECT 
             vehicle_id,
             route_id,
+            route_name,
+            direction,
+            operator,
             latitude,
             longitude,
             timestamp
@@ -57,10 +61,12 @@ def detect_and_match_stops():
         conn.close()
         return 0, 0
     
+    # Detect stop events
     stop_events = find_stop_events(positions)
     print(f"Detected {len(stop_events)} stop events")
     
     if not stop_events:
+        # Mark as analyzed even if no stops detected
         cur.execute("""
             UPDATE vehicle_positions 
             SET analyzed = true 
@@ -72,6 +78,7 @@ def detect_and_match_stops():
         conn.close()
         return 0, 0
     
+    # Match stop events to TransXChange stops
     matched_count = 0
     arrivals = []
     
@@ -86,20 +93,24 @@ def detect_and_match_stops():
             arrivals.append({
                 'vehicle_id': match_result['vehicle_id'],
                 'route_name': match_result['route_name'],
+                'direction': match_result.get('direction'),  # Direction from SIRI-VM
                 'naptan_id': match_result['naptan_id'],
                 'timestamp': match_result['timestamp'],
                 'distance_m': match_result['distance_m'],
-                'dwell_time_seconds': stop_event['dwell_time_seconds']
+                'dwell_time_seconds': stop_event.get('dwell_time_seconds', 0)
             })
     
     print(f"Matched {matched_count}/{len(stop_events)} stop events to stops")
     
+    # Store arrivals with direction
     if arrivals:
+        # Ensure table exists with direction column
         cur.execute("""
             CREATE TABLE IF NOT EXISTS vehicle_arrivals (
                 id SERIAL PRIMARY KEY,
                 vehicle_id TEXT NOT NULL,
                 route_name TEXT NOT NULL,
+                direction TEXT,
                 naptan_id TEXT NOT NULL,
                 timestamp TIMESTAMP NOT NULL,
                 distance_m FLOAT,
@@ -112,22 +123,34 @@ def detect_and_match_stops():
             
             CREATE INDEX IF NOT EXISTS idx_arrivals_timestamp 
             ON vehicle_arrivals(timestamp);
+            
+            CREATE INDEX IF NOT EXISTS idx_arrivals_direction
+            ON vehicle_arrivals(direction);
+            
+            CREATE INDEX IF NOT EXISTS idx_arrivals_route_dir
+            ON vehicle_arrivals(route_name, direction);
         """)
         
+        # Insert arrivals with direction
         values = [
-            (a['vehicle_id'], a['route_name'], a['naptan_id'], 
-             a['timestamp'], a['distance_m'], a['dwell_time_seconds'])
+            (a['vehicle_id'], a['route_name'], a['direction'],
+             a['naptan_id'], a['timestamp'], a['distance_m'], a['dwell_time_seconds'])
             for a in arrivals
         ]
         
         execute_batch(cur, """
             INSERT INTO vehicle_arrivals 
-            (vehicle_id, route_name, naptan_id, timestamp, distance_m, dwell_time_seconds)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (vehicle_id, route_name, direction, naptan_id, timestamp, distance_m, dwell_time_seconds)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, values, page_size=500)
         
         print(f"Recorded {len(arrivals)} arrivals")
+        
+        # Show direction coverage
+        with_direction = sum(1 for a in arrivals if a['direction'] is not None)
+        print(f"  Arrivals with direction: {with_direction}/{len(arrivals)} ({100*with_direction/len(arrivals):.1f}%)")
     
+    # Mark positions as analyzed
     cur.execute("""
         UPDATE vehicle_positions 
         SET analyzed = true 
@@ -158,7 +181,7 @@ def run_analysis():
         print("Missing modules - skipping calculations")
         return
     
-    # Step 2: Calculate bunching
+    # Step 2: Calculate bunching (now with direction)
     print("Step 2: Calculating bunching...")
     calculate_bunching_from_arrivals()
     
@@ -169,20 +192,21 @@ def run_analysis():
     
     # Step 4: Cleanup
     print("Step 4: Cleaning up...")
-    cleanup_old_data()
+    cleanup_old_data()  # Now uses smart cleanup logic
     
+    # Cleanup old arrivals
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
         DELETE FROM vehicle_arrivals
         WHERE timestamp < NOW() - INTERVAL '1 hour'
     """)
-    deleted = cur.rowcount
+    deleted_arrivals = cur.rowcount
     conn.commit()
     cur.close()
     conn.close()
     
-    print(f"Deleted {deleted} old arrivals")
+    print(f"Deleted {deleted_arrivals} old arrivals")
     print("="*60)
     print(f"Complete at {datetime.now()}")
     print(f"Summary: {stop_events} stops, {matched} matched")

@@ -57,7 +57,7 @@ def find_nearest_stop_for_route(lat: float, lon: float, route_name: str, radius_
             s.longitude
         FROM txc_stops s
         JOIN txc_pattern_stops ps ON s.naptan_id = ps.naptan_id
-        JOIN txc_route_patterns rp ON ps.service_code = rp.service_code
+        JOIN txc_route_patterns rp ON ps.pattern_id = rp.pattern_id
         WHERE rp.route_name = %s
     """, (route_name,))
     
@@ -89,6 +89,8 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
     lon = vehicle_position['longitude']
     # Handle both 'timestamp' and 'stop_timestamp' keys
     timestamp = vehicle_position.get('timestamp') or vehicle_position.get('stop_timestamp')
+    # Get direction from SIRI-VM data
+    direction = vehicle_position.get('direction')
     
     route_name = get_route_name(route_id) if route_id else None
     
@@ -96,6 +98,7 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
         return {
             'vehicle_id': vehicle_id,
             'route_name': None,
+            'direction': direction,
             'naptan_id': None,
             'timestamp': timestamp,
             'matched': False
@@ -107,6 +110,7 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
         return {
             'vehicle_id': vehicle_id,
             'route_name': route_name,
+            'direction': direction,
             'naptan_id': None,
             'timestamp': timestamp,
             'matched': False
@@ -117,6 +121,7 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
     return {
         'vehicle_id': vehicle_id,
         'route_name': route_name,
+        'direction': direction,
         'naptan_id': naptan_id,
         'stop_name': stop_name,
         'distance_m': round(distance, 1),

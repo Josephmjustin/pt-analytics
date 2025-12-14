@@ -1,27 +1,22 @@
 """
-Continuous polling of BODS GTFS-RT feed with TransXChange matching
-Fetches vehicle positions and matches to route-specific stops
+Optimized BODS SIRI-VM polling and ingestion
+Fetches vehicle positions every 10 seconds with direction and route info
 """
 
 import os
 import requests
-from google.transit import gtfs_realtime_pb2
+import xml.etree.ElementTree as ET
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import execute_batch
 from dotenv import load_dotenv
-
-# Import vehicle matcher
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from src.processing.vehicle_matcher import match_vehicle_to_stop
 
 load_dotenv()
 
 # BODS API Configuration
 BODS_API_KEY = os.getenv("BODS_API_KEY")
 LIVERPOOL_BBOX = "-3.05,53.35,-2.85,53.48"
-GTFS_RT_URL = f"https://data.bus-data.dft.gov.uk/api/v1/gtfsrtdatafeed/?api_key={BODS_API_KEY}&boundingBox={LIVERPOOL_BBOX}"
+SIRI_URL = f"https://data.bus-data.dft.gov.uk/api/v1/datafeed/?api_key={BODS_API_KEY}&boundingBox={LIVERPOOL_BBOX}"
 
 # Database Configuration
 DB_CONFIG = {
@@ -32,165 +27,143 @@ DB_CONFIG = {
     "port": os.getenv("DB_PORT", 5432)
 }
 
+# SIRI namespace
+NS = {
+    'siri': 'http://www.siri.org.uk/siri'
+}
+
+
 def fetch_vehicle_positions():
-    """Fetch vehicle positions from BODS GTFS-RT API"""
+    """Fetch vehicle positions from BODS SIRI-VM API"""
     try:
-        response = requests.get(GTFS_RT_URL, timeout=30)
+        response = requests.get(SIRI_URL, timeout=30)
         response.raise_for_status()
         
-        feed = gtfs_realtime_pb2.FeedMessage()
-        feed.ParseFromString(response.content)
+        root = ET.fromstring(response.content)
+        vehicle_activities = root.findall('.//siri:VehicleActivity', NS)
         
         vehicles = []
-        for entity in feed.entity:
-            if not entity.HasField('vehicle'):
+        for activity in vehicle_activities:
+            mvj = activity.find('.//siri:MonitoredVehicleJourney', NS)
+            
+            if mvj is None:
                 continue
             
-            vehicle = entity.vehicle
+            # Extract location
+            vehicle_location = mvj.find('siri:VehicleLocation', NS)
+            if vehicle_location is None:
+                continue
             
-            # Extract position data
-            if vehicle.HasField('position'):
-                vehicle_data = {
-                    'vehicle_id': vehicle.vehicle.id if vehicle.HasField('vehicle') and vehicle.vehicle.HasField('id') else entity.id,
-                    'route_id': vehicle.trip.route_id if vehicle.HasField('trip') and vehicle.trip.HasField('route_id') else None,
-                    'trip_id': vehicle.trip.trip_id if vehicle.HasField('trip') and vehicle.trip.HasField('trip_id') else None,
-                    'latitude': vehicle.position.latitude,
-                    'longitude': vehicle.position.longitude,
-                    'bearing': vehicle.position.bearing if vehicle.position.HasField('bearing') else None,
-                    'timestamp': datetime.fromtimestamp(vehicle.timestamp) if vehicle.HasField('timestamp') else datetime.now()
-                }
-                vehicles.append(vehicle_data)
+            longitude = vehicle_location.find('siri:Longitude', NS)
+            latitude = vehicle_location.find('siri:Latitude', NS)
+            
+            if longitude is None or latitude is None:
+                continue
+            
+            # Extract all available fields
+            vehicle_ref = mvj.find('siri:VehicleRef', NS)
+            line_ref = mvj.find('siri:LineRef', NS)
+            direction_ref = mvj.find('siri:DirectionRef', NS)
+            operator_ref = mvj.find('siri:OperatorRef', NS)
+            origin_name = mvj.find('siri:OriginName', NS)
+            destination_name = mvj.find('siri:DestinationName', NS)
+            bearing = mvj.find('siri:Bearing', NS)
+            recorded_at = activity.find('.//siri:RecordedAtTime', NS)
+            journey_ref = mvj.find('siri:FramedVehicleJourneyRef/siri:DatedVehicleJourneyRef', NS)
+            
+            vehicle_data = {
+                'vehicle_id': vehicle_ref.text if vehicle_ref is not None else None,
+                'route_name': line_ref.text if line_ref is not None else None,
+                'direction': direction_ref.text if direction_ref is not None else None,
+                'operator': operator_ref.text if operator_ref is not None else None,
+                'origin': origin_name.text if origin_name is not None else None,
+                'destination': destination_name.text if destination_name is not None else None,
+                'latitude': float(latitude.text),
+                'longitude': float(longitude.text),
+                'bearing': float(bearing.text) if bearing is not None else None,
+                'timestamp': datetime.fromisoformat(recorded_at.text.replace('Z', '+00:00')) if recorded_at is not None else datetime.now(),
+                'trip_id': journey_ref.text if journey_ref is not None else None
+            }
+            
+            vehicles.append(vehicle_data)
         
         return vehicles
     
     except Exception as e:
-        print(f"Error fetching GTFS-RT: {e}")
+        print(f"Error fetching SIRI-VM: {e}")
         return []
 
+
 def store_vehicle_positions(vehicles):
-    """Store raw vehicle positions (staging table - 15min retention)"""
+    """Store vehicle positions with direction and route info"""
     if not vehicles:
-        return
+        return 0
     
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
     
-    # Insert vehicle positions
-    values = [
-        (
-            v['vehicle_id'],
-            v['latitude'],
-            v['longitude'],
-            v['timestamp'],
-            v['route_id'],
-            v['trip_id'],
-            v['bearing']
-        )
-        for v in vehicles
-    ]
-    
-    execute_batch(cur, """
-        INSERT INTO vehicle_positions 
-        (vehicle_id, latitude, longitude, timestamp, route_id, trip_id, bearing)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (vehicle_id, timestamp) DO NOTHING
-    """, values, page_size=500)
-    
-    conn.commit()
-    cur.close()
-    conn.close()
-
-def match_and_record_arrivals(vehicles):
-    """Match vehicles to stops using TransXChange and record arrivals"""
-    if not vehicles:
-        return
-    
-    print(f"Matching {len(vehicles)} vehicles to stops...")
-    matched_count = 0
-    unmatched_count = 0
-    arrivals = []
-    
-    for i, vehicle in enumerate(vehicles):
-        # Progress indicator every 50 vehicles
-        if (i + 1) % 50 == 0:
-            print(f"  Processed {i + 1}/{len(vehicles)} vehicles...")
-        
-        # Match vehicle to stop using TransXChange
-        match_result = match_vehicle_to_stop(vehicle)
-        
-        if match_result['matched']:
-            matched_count += 1
-            arrivals.append({
-                'vehicle_id': match_result['vehicle_id'],
-                'route_name': match_result['route_name'],
-                'naptan_id': match_result['naptan_id'],
-                'timestamp': match_result['timestamp'],
-                'distance_m': match_result['distance_m']
-            })
-        else:
-            unmatched_count += 1
-    
-    # Store arrivals in database
-    if arrivals:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        
-        # Create arrivals table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS vehicle_arrivals (
-                id SERIAL PRIMARY KEY,
-                vehicle_id TEXT NOT NULL,
-                route_name TEXT NOT NULL,
-                naptan_id TEXT NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                distance_m FLOAT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_arrivals_route_stop 
-            ON vehicle_arrivals(route_name, naptan_id, timestamp);
-            
-            CREATE INDEX IF NOT EXISTS idx_arrivals_timestamp 
-            ON vehicle_arrivals(timestamp);
-        """)
-        
-        # Insert arrivals
+    try:
         values = [
-            (a['vehicle_id'], a['route_name'], a['naptan_id'], 
-             a['timestamp'], a['distance_m'])
-            for a in arrivals
+            (
+                v['vehicle_id'],
+                v['latitude'],
+                v['longitude'],
+                v['timestamp'],
+                v['route_name'],
+                v['trip_id'],
+                v['bearing'],
+                v['direction'],
+                v['operator'],
+                v['origin'],
+                v['destination']
+            )
+            for v in vehicles
         ]
         
         execute_batch(cur, """
-            INSERT INTO vehicle_arrivals 
-            (vehicle_id, route_name, naptan_id, timestamp, distance_m)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO vehicle_positions 
+            (vehicle_id, latitude, longitude, timestamp, route_name, trip_id, bearing, 
+             direction, operator, origin, destination)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (vehicle_id, timestamp) DO UPDATE SET
+                route_name = EXCLUDED.route_name,
+                direction = EXCLUDED.direction,
+                operator = EXCLUDED.operator,
+                origin = EXCLUDED.origin,
+                destination = EXCLUDED.destination
         """, values, page_size=500)
         
         conn.commit()
+        return len(vehicles)
+    
+    except Exception as e:
+        conn.rollback()
+        print(f"Error storing positions: {e}")
+        return 0
+    
+    finally:
         cur.close()
         conn.close()
-    
-    print(f"Matched: {matched_count}, Unmatched: {unmatched_count}, Arrivals recorded: {len(arrivals)}")
-    return matched_count, unmatched_count
+
 
 def poll_and_ingest():
     """Main polling function - called by Prefect every 10 seconds"""
-    print(f"[{datetime.now()}] Polling BODS API...")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Fetch vehicle positions
     vehicles = fetch_vehicle_positions()
-    print(f"Fetched {len(vehicles)} vehicle positions")
     
     if not vehicles:
+        print(f"[{timestamp}] No vehicles fetched")
         return
     
-    # Store raw positions (staging) - NO matching here, done in analysis flow
-    store_vehicle_positions(vehicles)
-    print(f"Stored {len(vehicles)} positions (unanalyzed)")
+    # Count vehicles with direction
+    with_direction = sum(1 for v in vehicles if v['direction'] is not None)
     
-    print(f"Poll complete")
+    # Store positions
+    stored = store_vehicle_positions(vehicles)
+    print(f"[{timestamp}] Stored {stored}/{len(vehicles)} positions ({with_direction} with direction)")
+
 
 if __name__ == "__main__":
-    # Test run
     poll_and_ingest()

@@ -1,10 +1,10 @@
 """
-Data Retention: Clean up analyzed vehicle positions
+Smart Data Retention: Clean up vehicle positions safely
 Deletes:
-1. Positions marked as analyzed=true
-2. Positions older than 15 minutes (safety cleanup)
+1. Analyzed positions older than 15 minutes (normal cleanup)
+2. Unanalyzed positions older than 30 minutes (safety net - should not happen)
 Keeps:
-- Unanalyzed positions (waiting for next analysis cycle)
+- Recent unanalyzed positions (waiting for analysis)
 """
 
 import psycopg2
@@ -23,7 +23,11 @@ DB_CONFIG = {
 }
 
 def cleanup_old_data():
-    """Delete analyzed vehicle positions and old data"""
+    """
+    Smart cleanup with safety checks
+    - Analyzed data >15 min old (normal cleanup)
+    - Unanalyzed data >30 min old (safety net - logs warning if any found)
+    """
     
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
@@ -34,34 +38,47 @@ def cleanup_old_data():
         before_count = cur.fetchone()[0]
         
         cur.execute("SELECT COUNT(*) FROM vehicle_positions WHERE analyzed = true")
-        analyzed_count = cur.fetchone()[0]
+        total_analyzed = cur.fetchone()[0]
         
-        print(f"Current state: {before_count:,} total, {analyzed_count:,} analyzed")
+        print(f"Current state: {before_count:,} total, {total_analyzed:,} analyzed")
         
-        # Delete analyzed positions
+        # Count what will be deleted (with breakdown)
         cur.execute("""
-            DELETE FROM vehicle_positions 
-            WHERE analyzed = true
+            SELECT 
+                COUNT(*) FILTER (WHERE analyzed = true) as analyzed_count,
+                COUNT(*) FILTER (WHERE analyzed = false) as unanalyzed_count
+            FROM vehicle_positions
+            WHERE (analyzed = true AND timestamp < NOW() - INTERVAL '15 minutes')
+               OR (analyzed = false AND timestamp < NOW() - INTERVAL '30 minutes')
         """)
-        deleted_analyzed = cur.rowcount
         
-        # Safety cleanup: delete positions older than 15 minutes (should be analyzed by now)
+        result = cur.fetchone()
+        analyzed_to_delete = result[0] if result else 0
+        unanalyzed_to_delete = result[1] if result else 0
+        
+        # Smart deletion
         cur.execute("""
-            DELETE FROM vehicle_positions 
-            WHERE timestamp < NOW() - INTERVAL '15 minutes'
+            DELETE FROM vehicle_positions
+            WHERE (analyzed = true AND timestamp < NOW() - INTERVAL '15 minutes')
+               OR (analyzed = false AND timestamp < NOW() - INTERVAL '30 minutes')
         """)
-        deleted_old = cur.rowcount
         
+        total_deleted = cur.rowcount
         conn.commit()
         
-        total_deleted = deleted_analyzed + deleted_old
         after_count = before_count - total_deleted
         
         print(f"Cleanup complete:")
-        print(f"  Deleted {deleted_analyzed:,} analyzed positions")
-        print(f"  Deleted {deleted_old:,} old (>15min) positions")
+        print(f"  Deleted {analyzed_to_delete:,} analyzed positions (>15min)")
+        
+        if unanalyzed_to_delete > 0:
+            print(f"  ⚠ WARNING: Deleted {unanalyzed_to_delete:,} unanalyzed positions (>30min)")
+            print(f"     Analysis is falling behind! Investigate performance issues.")
+        else:
+            print(f"  Deleted {unanalyzed_to_delete:,} unanalyzed positions (>30min) ✓")
+        
         print(f"  Total deleted: {total_deleted:,}")
-        print(f"  Remaining: {after_count:,} positions (unanalyzed)")
+        print(f"  Remaining: {after_count:,} positions")
         
         # Show table size
         cur.execute("""

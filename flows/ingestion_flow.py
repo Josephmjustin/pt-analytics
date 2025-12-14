@@ -13,7 +13,7 @@ import time
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 
 # Import the poll function
-import continuous_poller
+from scripts import continuous_poller
 
 @task(name="Poll BODS API", retries=3, retry_delay_seconds=10)
 def ingest_data():

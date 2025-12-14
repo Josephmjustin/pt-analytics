@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#/cron_scripts/run_ingestion.py
 """
 Standalone ingestion script for cron
 """
@@ -10,7 +11,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 sys.path.append(os.path.join(project_root, 'scripts'))
 
-import continuous_poller
+from scripts import continuous_poller
 
 if __name__ == "__main__":
     try:
