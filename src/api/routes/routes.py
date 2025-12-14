@@ -21,7 +21,7 @@ def get_all_routes():
             COUNT(DISTINCT ps.naptan_id) as total_stops,
             COUNT(DISTINCT rp.service_code) as variants
         FROM txc_route_patterns rp
-        JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
+        JOIN txc_pattern_stops ps ON rp.pattern_id = ps.pattern_id
         GROUP BY rp.route_name
         ORDER BY rp.route_name
     """
@@ -71,10 +71,11 @@ def get_route_details(route_id: str):
                 ps.stop_sequence,
                 bs.avg_bunching_rate,
                 bs.total_count
-            FROM txc_pattern_stops ps
+            FROM txc_route_patterns rp
+            JOIN txc_pattern_stops ps ON rp.pattern_id = ps.pattern_id
             JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
             LEFT JOIN bunching_by_stop bs ON ps.naptan_id = bs.stop_id
-            WHERE ps.service_code = %s
+            WHERE rp.service_code = %s
             ORDER BY ps.stop_sequence
         """, (variant['service_code'],))
         
@@ -117,7 +118,7 @@ def get_route_stops_with_bunching(route_id: str, hour: int = None):
             MAX(brsh.expected_headway_minutes) as expected_headway_minutes,
             STRING_AGG(DISTINCT rp.operator_name, ', ') as operators
         FROM txc_route_patterns rp
-        JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
+        JOIN txc_pattern_stops ps ON rp.pattern_id = ps.pattern_id
         JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
         LEFT JOIN bunching_by_route_stop_hour brsh 
             ON brsh.route_id = rp.route_name 
@@ -162,7 +163,7 @@ def download_route_csv(route_id: str):
             bs.avg_bunching_rate,
             bs.total_count
         FROM txc_route_patterns rp
-        JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
+        JOIN txc_pattern_stops ps ON rp.pattern_id = ps.pattern_id
         JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
         LEFT JOIN bunching_by_stop bs ON ps.naptan_id = bs.stop_id
         WHERE rp.route_name = %s

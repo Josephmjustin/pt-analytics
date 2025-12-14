@@ -179,7 +179,7 @@ def get_stop_routes_with_bunching(stop_id: str, hour: int = None):
             brsh.observation_count,
             brsh.last_updated
         FROM txc_pattern_stops ps
-        JOIN txc_route_patterns rp ON ps.service_code = rp.service_code
+        JOIN txc_route_patterns rp ON ps.pattern_id = rp.pattern_id
         LEFT JOIN bunching_by_route_stop_hour brsh 
             ON brsh.route_id = rp.route_name 
             AND brsh.stop_id = ps.naptan_id
@@ -262,7 +262,7 @@ def get_stop_routes(stop_id: str):
             COUNT(DISTINCT ps.naptan_id) as stop_count,
             NULL as avg_bunching_rate
         FROM txc_pattern_stops ps
-        JOIN txc_route_patterns rp ON ps.service_code = rp.service_code
+        JOIN txc_route_patterns rp ON ps.pattern_id = rp.pattern_id
         WHERE ps.naptan_id = %s
         GROUP BY rp.service_code, rp.route_name, rp.operator_name, rp.direction
         ORDER BY rp.route_name, rp.direction
