@@ -67,11 +67,11 @@ def detect_and_match_stops():
     
     if not stop_events:
         # Mark as analyzed even if no stops detected
+        # Mark ALL unanalyzed positions, not just recent ones
         cur.execute("""
             UPDATE vehicle_positions 
             SET analyzed = true 
-            WHERE analyzed = false 
-                AND timestamp >= NOW() - INTERVAL '30 minutes'
+            WHERE analyzed = false
         """)
         conn.commit()
         cur.close()
@@ -150,12 +150,11 @@ def detect_and_match_stops():
         with_direction = sum(1 for a in arrivals if a['direction'] is not None)
         print(f"  Arrivals with direction: {with_direction}/{len(arrivals)} ({100*with_direction/len(arrivals):.1f}%)")
     
-    # Mark positions as analyzed
+    # Mark ALL unanalyzed positions as analyzed (not just recent ones)
     cur.execute("""
         UPDATE vehicle_positions 
         SET analyzed = true 
-        WHERE analyzed = false 
-          AND timestamp >= NOW() - INTERVAL '30 minutes'
+        WHERE analyzed = false
     """)
     
     conn.commit()
