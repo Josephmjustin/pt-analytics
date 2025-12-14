@@ -1,6 +1,7 @@
 """
-Calculate bunching scores BY ROUTE-STOP-HOUR
+Calculate bunching scores BY ROUTE-STOP-HOUR-DIRECTION
 This is the core table for passenger-facing bunching predictions
+UPDATED: Now separates inbound/outbound for accurate analysis
 """
 
 import psycopg2
@@ -19,35 +20,38 @@ DB_CONFIG = {
 
 def calculate_bunching_from_arrivals():
     """
-    Calculate bunching scores grouped by ROUTE + STOP + HOUR.
-    This allows route-specific bunching predictions per hour.
+    Calculate bunching scores grouped by ROUTE + STOP + HOUR + DIRECTION.
+    This allows route-specific bunching predictions per hour per direction.
     """
     
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
     
     try:
-        print("Calculating route-stop-hour bunching scores...")
+        print("Calculating route-stop-hour-direction bunching scores...")
         
         cur.execute("""
             WITH route_stop_arrivals AS (
                 SELECT 
                     route_name,
+                    direction,
                     naptan_id,
                     timestamp,
                     EXTRACT(HOUR FROM timestamp)::INTEGER as hour_of_day,
                     EXTRACT(EPOCH FROM (
                         timestamp - LAG(timestamp) OVER (
-                            PARTITION BY route_name, naptan_id 
+                            PARTITION BY route_name, direction, naptan_id 
                             ORDER BY timestamp
                         )
                     ))/60 AS headway_minutes
                 FROM vehicle_arrivals
-                ORDER BY route_name, naptan_id, timestamp
+                WHERE direction IS NOT NULL  -- Only process arrivals with direction
+                ORDER BY route_name, direction, naptan_id, timestamp
             ),
             arrivals_with_baseline AS (
                 SELECT 
                     route_name,
+                    direction,
                     naptan_id,
                     timestamp,
                     hour_of_day,
@@ -94,6 +98,7 @@ def calculate_bunching_from_arrivals():
             route_stop_hour_stats AS (
                 SELECT 
                     route_name,
+                    direction,
                     naptan_id,
                     hour_of_day,
                     COUNT(*) + 1 AS total_arrivals,
@@ -102,13 +107,14 @@ def calculate_bunching_from_arrivals():
                     AVG(expected_headway_minutes) AS avg_expected_headway,
                     SUM(is_bunched) AS bunched_arrivals
                 FROM arrivals_with_baseline
-                GROUP BY route_name, naptan_id, hour_of_day
+                GROUP BY route_name, direction, naptan_id, hour_of_day
                 HAVING COUNT(*) >= 2  -- Need at least 2 headways per hour
             )
             INSERT INTO bunching_by_route_stop_hour (
                 route_id,
                 stop_id,
                 hour_of_day,
+                direction,
                 stop_name,
                 bunching_rate_pct,
                 avg_headway_minutes,
@@ -122,6 +128,7 @@ def calculate_bunching_from_arrivals():
                 rsh.route_name AS route_id,
                 rsh.naptan_id AS stop_id,
                 rsh.hour_of_day,
+                rsh.direction,
                 ts.stop_name,
                 ROUND((bunched_arrivals::numeric / measured_headways * 100), 1) AS bunching_rate_pct,
                 ROUND(avg_headway::numeric, 1) AS avg_headway_minutes,
@@ -132,7 +139,7 @@ def calculate_bunching_from_arrivals():
                 NOW()
             FROM route_stop_hour_stats rsh
             LEFT JOIN txc_stops ts ON rsh.naptan_id = ts.naptan_id
-            ON CONFLICT (route_id, stop_id, hour_of_day) DO UPDATE SET
+            ON CONFLICT (route_id, stop_id, hour_of_day, direction) DO UPDATE SET
                 bunching_rate_pct = (bunching_by_route_stop_hour.bunching_rate_pct * 0.7 + EXCLUDED.bunching_rate_pct * 0.3),
                 avg_headway_minutes = (bunching_by_route_stop_hour.avg_headway_minutes * 0.7 + EXCLUDED.avg_headway_minutes * 0.3),
                 expected_headway_minutes = EXCLUDED.expected_headway_minutes,
@@ -145,7 +152,7 @@ def calculate_bunching_from_arrivals():
         inserted = cur.rowcount
         conn.commit()
         
-        print(f"✓ Updated {inserted} route-stop-hour records")
+        print(f"✓ Updated {inserted} route-stop-hour-direction records")
         
         # Show summary
         cur.execute("""
@@ -154,6 +161,7 @@ def calculate_bunching_from_arrivals():
                 COUNT(DISTINCT route_id) as unique_routes,
                 COUNT(DISTINCT stop_id) as unique_stops,
                 COUNT(DISTINCT hour_of_day) as hours_covered,
+                COUNT(DISTINCT direction) as directions,
                 ROUND(AVG(bunching_rate_pct)::numeric, 1) as avg_bunching_rate
             FROM bunching_by_route_stop_hour
         """)
@@ -165,27 +173,29 @@ def calculate_bunching_from_arrivals():
             print(f"  Unique routes: {stats[1]}")
             print(f"  Unique stops: {stats[2]}")
             print(f"  Hours covered: {stats[3]}/24")
-            print(f"  Avg bunching: {stats[4]}%")
+            print(f"  Directions: {stats[4]}")
+            print(f"  Avg bunching: {stats[5]}%")
         
-        # Show example: Route 26 at different hours
+        # Show example: Route 14 at different hours BY DIRECTION
         cur.execute("""
             SELECT 
                 route_id,
+                direction,
                 stop_name,
                 hour_of_day,
                 bunching_rate_pct,
                 expected_headway_minutes
             FROM bunching_by_route_stop_hour
-            WHERE route_id = '26'
-            ORDER BY stop_id, hour_of_day
+            WHERE route_id = '14'
+            ORDER BY direction, stop_id, hour_of_day
             LIMIT 10
         """)
         
         examples = cur.fetchall()
         if examples:
-            print(f"\nExample: Route 26 bunching by hour:")
-            for route, stop, hour, rate, expected in examples:
-                print(f"  {stop} @ {hour:02d}:00 → {rate}% bunching (expected {expected} min)")
+            print(f"\nExample: Route 14 bunching by hour and direction:")
+            for route, direction, stop, hour, rate, expected in examples:
+                print(f"  {stop} ({direction}) @ {hour:02d}:00 → {rate}% bunching (expected {expected} min)")
         
     except Exception as e:
         print(f"Error: {e}")
