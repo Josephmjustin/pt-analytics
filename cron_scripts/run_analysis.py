@@ -49,7 +49,7 @@ def detect_and_match_stops():
             timestamp
         FROM vehicle_positions
         WHERE analyzed = false
-          AND timestamp >= NOW() - INTERVAL '10 minutes'
+        AND timestamp >= NOW() - INTERVAL '30 minutes'
         ORDER BY vehicle_id, timestamp
     """)
     
@@ -71,7 +71,7 @@ def detect_and_match_stops():
             UPDATE vehicle_positions 
             SET analyzed = true 
             WHERE analyzed = false 
-              AND timestamp >= NOW() - INTERVAL '10 minutes'
+                AND timestamp >= NOW() - INTERVAL '30 minutes'
         """)
         conn.commit()
         cur.close()
@@ -155,7 +155,7 @@ def detect_and_match_stops():
         UPDATE vehicle_positions 
         SET analyzed = true 
         WHERE analyzed = false 
-          AND timestamp >= NOW() - INTERVAL '10 minutes'
+          AND timestamp >= NOW() - INTERVAL '30 minutes'
     """)
     
     conn.commit()
