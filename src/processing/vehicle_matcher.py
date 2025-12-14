@@ -40,26 +40,40 @@ def get_route_name(route_id: str) -> str:
         return route_name
     return None
 
-def find_nearest_stop_for_route(lat: float, lon: float, route_name: str, radius_m: float = 10.0):
+def find_nearest_stop_for_route(lat: float, lon: float, route_name: str, direction: str = None, radius_m: float = 10.0):
     """
-    Find nearest stop for a specific route within radius
-    Queries database instead of loading JSON
+    Find nearest stop for a specific route AND direction within radius
+    OPTIMIZED: Filters by direction to reduce candidate stops by ~50%
     """
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Query stops that are on this route's patterns
-    cur.execute("""
-        SELECT DISTINCT
-            s.naptan_id,
-            s.stop_name,
-            s.latitude,
-            s.longitude
-        FROM txc_stops s
-        JOIN txc_pattern_stops ps ON s.naptan_id = ps.naptan_id
-        JOIN txc_route_patterns rp ON ps.pattern_id = rp.pattern_id
-        WHERE rp.route_name = %s
-    """, (route_name,))
+    # Query stops that are on this route's patterns FOR THIS DIRECTION ONLY
+    if direction:
+        cur.execute("""
+            SELECT DISTINCT
+                s.naptan_id,
+                s.stop_name,
+                s.latitude,
+                s.longitude
+            FROM txc_stops s
+            JOIN txc_pattern_stops ps ON s.naptan_id = ps.naptan_id
+            JOIN txc_route_patterns rp ON ps.pattern_id = rp.pattern_id
+            WHERE rp.route_name = %s AND rp.direction = %s
+        """, (route_name, direction))
+    else:
+        # Fallback: no direction provided (shouldn't happen with SIRI-VM)
+        cur.execute("""
+            SELECT DISTINCT
+                s.naptan_id,
+                s.stop_name,
+                s.latitude,
+                s.longitude
+            FROM txc_stops s
+            JOIN txc_pattern_stops ps ON s.naptan_id = ps.naptan_id
+            JOIN txc_route_patterns rp ON ps.pattern_id = rp.pattern_id
+            WHERE rp.route_name = %s
+        """, (route_name,))
     
     stops = cur.fetchall()
     cur.close()
@@ -102,7 +116,7 @@ def match_vehicle_to_stop(vehicle_position: dict) -> dict:
             'matched': False
         }
     
-    nearest = find_nearest_stop_for_route(lat, lon, route_name, radius_m=30.0)
+    nearest = find_nearest_stop_for_route(lat, lon, route_name, direction, radius_m=30.0)
     
     if not nearest:
         return {
