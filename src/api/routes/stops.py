@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from src.api.database import get_db_connection
-from src.config.operator_mappings import get_sql_case_statement
 
 router = APIRouter(prefix="/stops", tags=["stops"])
 
@@ -167,14 +166,11 @@ def get_stop_routes_with_bunching(stop_id: str, hour: int = None):
         conn.close()
         raise HTTPException(status_code=404, detail="Stop not found")
     
-    # Get operator name mapping SQL
-    operator_case = get_sql_case_statement()
-    
     # Get routes with hour-specific bunching scores
     query = f"""
         SELECT DISTINCT
             rp.route_name,
-            {operator_case} as operator_name,
+            rp.operator_name,
             rp.direction,
             rp.origin,
             rp.destination,
@@ -256,15 +252,12 @@ def get_stop_routes(stop_id: str):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get operator name mapping SQL
-    operator_case = get_sql_case_statement()
-    
     # Get routes from TransXChange pattern_stops
     query = f"""
         SELECT DISTINCT
             rp.service_code,
             rp.route_name,
-            {operator_case} as operator_name,
+            rp.operator_name,
             rp.direction,
             COUNT(DISTINCT ps.naptan_id) as stop_count,
             NULL as avg_bunching_rate

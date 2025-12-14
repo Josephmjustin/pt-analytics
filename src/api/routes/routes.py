@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from src.api.database import get_db_connection
-from src.config.operator_mappings import get_sql_case_statement
 import io
 import csv
 import urllib.parse
@@ -14,14 +13,11 @@ def get_all_routes():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get operator name mapping SQL
-    operator_case = get_sql_case_statement()
-    
     query = f"""
         SELECT DISTINCT
             rp.route_name as route_id,
             rp.route_name,
-            STRING_AGG(DISTINCT {operator_case}, ', ') as operators,
+            STRING_AGG(DISTINCT rp.operator_name, ', ') as operators,
             COUNT(DISTINCT ps.naptan_id) as total_stops,
             COUNT(DISTINCT rp.service_code) as variants
         FROM txc_route_patterns rp
@@ -44,14 +40,11 @@ def get_route_details(route_id: str):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get operator name mapping SQL
-    operator_case = get_sql_case_statement()
-    
     # Get all service codes for this route (all operators)
     query = f"""
         SELECT DISTINCT
             service_code,
-            {operator_case} as operator_name,
+            operator_name,
             direction,
             origin,
             destination
@@ -112,9 +105,6 @@ def get_route_stops_with_bunching(route_id: str, hour: int = None):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get operator name mapping SQL
-    operator_case = get_sql_case_statement()
-    
     # Get stops with bunching (all operators combined)
     query = f"""
         SELECT 
@@ -125,7 +115,7 @@ def get_route_stops_with_bunching(route_id: str, hour: int = None):
             MAX(ts.longitude) as longitude,
             MAX(brsh.bunching_rate_pct) as bunching_rate_pct,
             MAX(brsh.expected_headway_minutes) as expected_headway_minutes,
-            STRING_AGG(DISTINCT {operator_case}, ', ') as operators
+            STRING_AGG(DISTINCT rp.operator_name, ', ') as operators
         FROM txc_route_patterns rp
         JOIN txc_pattern_stops ps ON rp.service_code = ps.service_code
         JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
@@ -160,14 +150,11 @@ def download_route_csv(route_id: str):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Get operator name mapping SQL
-    operator_case = get_sql_case_statement()
-    
     # Get all stops for all operators
     query = f"""
         SELECT 
             rp.service_code,
-            {operator_case} as operator_name,
+            rp.operator_name,
             rp.direction,
             ps.stop_sequence,
             ps.naptan_id,
