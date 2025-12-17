@@ -43,6 +43,7 @@ def get_route_details(route_id: str):
     # Get all service codes for this route (all operators)
     query = f"""
         SELECT DISTINCT
+            pattern_id,
             service_code,
             operator_name,
             direction,
@@ -71,13 +72,12 @@ def get_route_details(route_id: str):
                 ps.stop_sequence,
                 bs.avg_bunching_rate,
                 bs.total_count
-            FROM txc_route_patterns rp
-            JOIN txc_pattern_stops ps ON rp.pattern_id = ps.pattern_id
+            FROM txc_pattern_stops ps
             JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
             LEFT JOIN bunching_by_stop bs ON ps.naptan_id = bs.stop_id
-            WHERE rp.service_code = %s
+            WHERE ps.pattern_id = %s
             ORDER BY ps.stop_sequence
-        """, (variant['service_code'],))
+        """, (variant['pattern_id'],))
         
         stops = cur.fetchall()
         all_stops.append({
