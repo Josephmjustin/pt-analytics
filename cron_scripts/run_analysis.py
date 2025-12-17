@@ -40,7 +40,6 @@ def detect_and_match_stops():
     cur.execute("""
         SELECT 
             vehicle_id,
-            route_id,
             route_name,
             direction,
             operator,
