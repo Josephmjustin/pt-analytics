@@ -87,6 +87,25 @@ def cleanup_old_data():
         size = cur.fetchone()[0]
         print(f"  Table size: {size}")
         
+        # Run VACUUM to reclaim disk space
+        print("  Running VACUUM to reclaim space...")
+        conn.commit()  # Commit before VACUUM
+        cur.close()
+        conn.close()
+        
+        # Reconnect with autocommit for VACUUM
+        conn = psycopg2.connect(**DB_CONFIG)
+        conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        cur.execute("VACUUM vehicle_positions")
+        
+        # Check size after VACUUM
+        cur.execute("""
+            SELECT pg_size_pretty(pg_total_relation_size('vehicle_positions'))
+        """)
+        new_size = cur.fetchone()[0]
+        print(f"  Table size after VACUUM: {new_size}")
+        
     except Exception as e:
         print(f"Error during cleanup: {e}")
         conn.rollback()
