@@ -10,6 +10,7 @@ Runs complete analysis pipeline with SIRI-VM direction support:
 import sys
 import os
 from datetime import datetime
+import fcntl
 
 # Add project paths
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +31,9 @@ try:
 except ImportError as e:
     HAS_ALL_MODULES = False
     print(f"Warning: Missing module - {e}")
+
+# Lock file to prevent concurrent runs
+LOCK_FILE = '/tmp/pt_analysis.lock'
 
 def detect_and_match_stops():
     """Find stop events and match to TransXChange stops"""
@@ -210,6 +214,14 @@ def run_analysis():
     print(f"Summary: {stop_events} stops, {matched} matched")
 
 if __name__ == "__main__":
+    # Acquire lock to prevent concurrent runs
+    lock_fd = open(LOCK_FILE, 'w')
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("Another analysis is already running. Exiting.")
+        sys.exit(0)
+    
     try:
         run_analysis()
     except Exception as e:
@@ -217,3 +229,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        # Release lock
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
