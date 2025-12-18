@@ -127,10 +127,10 @@ def detect_and_match_stops():
             CREATE INDEX IF NOT EXISTS idx_arrivals_timestamp 
             ON vehicle_arrivals(timestamp);
             
-            CREATE INDEX IF NOT EXISTS idx_arrivals_direction
+            CREATE INDEX IF NOT EXISTS idx_vehicle_arrivals_direction
             ON vehicle_arrivals(direction);
             
-            CREATE INDEX IF NOT EXISTS idx_arrivals_route_dir
+            CREATE INDEX IF NOT EXISTS idx_vehicle_arrivals_route_dir
             ON vehicle_arrivals(route_name, direction);
         """)
         
