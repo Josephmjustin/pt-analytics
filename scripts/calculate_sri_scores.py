@@ -282,27 +282,28 @@ def calculate_sri_scores():
             SELECT 
                 route_name, direction, operator,
                 ROUND(AVG(sri_score)::numeric, 1) as avg_sri,
-                AVG(sri_grade) as grade
+                MODE() WITHIN GROUP (ORDER BY sri_grade) as most_common_grade
             FROM service_reliability_index
             GROUP BY route_name, direction, operator
             ORDER BY avg_sri DESC
             LIMIT 5
         """)
         for row in cur.fetchall():
-            print(f"  {row[0]} ({row[1]}) - {row[2]}: {row[3]}/100")
+            print(f"  {row[0]} ({row[1]}) - {row[2]}: {row[3]}/100 (Grade: {row[4]})")
         
         print("\nBottom 5 Routes:")
         cur.execute("""
             SELECT 
                 route_name, direction, operator,
-                ROUND(AVG(sri_score)::numeric, 1) as avg_sri
+                ROUND(AVG(sri_score)::numeric, 1) as avg_sri,
+                MODE() WITHIN GROUP (ORDER BY sri_grade) as most_common_grade
             FROM service_reliability_index
             GROUP BY route_name, direction, operator
             ORDER BY avg_sri ASC
             LIMIT 5
         """)
         for row in cur.fetchall():
-            print(f"  {row[0]} ({row[1]}) - {row[2]}: {row[3]}/100")
+            print(f"  {row[0]} ({row[1]}) - {row[2]}: {row[3]}/100 (Grade: {row[4]})")
         
         print("\n" + "="*60)
         print(f"✓ Complete at {datetime.now()}")
