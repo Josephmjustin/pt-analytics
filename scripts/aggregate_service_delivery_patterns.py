@@ -54,17 +54,33 @@ def aggregate_service_delivery_patterns():
                 route_name,
                 direction,
                 COALESCE(operator, 'Unknown') as operator,
-                EXTRACT(YEAR FROM timestamp)::INT as year,
-                EXTRACT(MONTH FROM timestamp)::INT as month,
-                EXTRACT(DOW FROM timestamp)::INT as day_of_week,
-                EXTRACT(HOUR FROM timestamp)::INT as hour,
+                -- Use single representative timestamp to extract time dimensions
+                EXTRACT(YEAR FROM MAX(timestamp))::INT as year,
+                EXTRACT(MONTH FROM MAX(timestamp))::INT as month,
+                EXTRACT(DOW FROM MAX(timestamp))::INT as day_of_week,
+                EXTRACT(HOUR FROM MAX(timestamp))::INT as hour,
                 -- Count unique vehicle-day combinations as "trips"
                 COUNT(DISTINCT (vehicle_id, DATE(timestamp))) as observed_trips
             FROM vehicle_arrivals
             WHERE direction IS NOT NULL
+              AND operator IS NOT NULL
               AND timestamp >= NOW() - INTERVAL '7 days'
-            GROUP BY route_name, direction, operator, year, month, day_of_week, hour
+            GROUP BY route_name, direction, COALESCE(operator, 'Unknown'),
+                     DATE(timestamp), EXTRACT(HOUR FROM timestamp)
             HAVING COUNT(DISTINCT (vehicle_id, DATE(timestamp))) >= 1
+        ),
+        aggregated_patterns AS (
+            SELECT 
+                route_name,
+                direction,
+                operator,
+                year,
+                month,
+                day_of_week,
+                hour,
+                SUM(observed_trips) as total_observed_trips
+            FROM trip_patterns
+            GROUP BY route_name, direction, operator, year, month, day_of_week, hour
         )
         INSERT INTO service_delivery_patterns (
             route_name, direction, operator,
@@ -79,13 +95,13 @@ def aggregate_service_delivery_patterns():
         SELECT 
             route_name, direction, operator,
             year, month, day_of_week, hour,
-            observed_trips,  -- Placeholder: use observed as scheduled
-            observed_trips,  -- All observed trips assumed completed
+            total_observed_trips,  -- Placeholder: use observed as scheduled
+            total_observed_trips,  -- All observed trips assumed completed
             0,  -- No cancellation data yet
             0,  -- No partial trip data yet
             100.0,  -- Placeholder: 100% delivery rate
             NOW()
-        FROM trip_patterns
+        FROM aggregated_patterns
         ON CONFLICT (route_name, direction, operator, year, month, day_of_week, hour)
         DO UPDATE SET
             scheduled_trips = service_delivery_patterns.scheduled_trips + EXCLUDED.scheduled_trips,
