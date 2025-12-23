@@ -84,10 +84,6 @@ def aggregate_headway_patterns():
                     THEN STDDEV(headway_minutes) / AVG(headway_minutes)
                     ELSE NULL
                 END as cv,
-                -- Bunching rate: % of headways < 50% of median
-                100.0 * COUNT(*) FILTER (
-                    WHERE headway_minutes < PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY headway_minutes) * 0.5
-                ) / COUNT(*) as bunching_rate,
                 COUNT(*) as observation_count
             FROM arrival_headways
             WHERE headway_minutes IS NOT NULL
@@ -95,6 +91,31 @@ def aggregate_headway_patterns():
               AND headway_minutes < 120  -- Exclude gaps > 2 hours
             GROUP BY route_name, direction, operator, stop_id, year, month, day_of_week, hour
             HAVING COUNT(*) >= 3  -- Need at least 3 observations
+        ),
+        bunching_calc AS (
+            SELECT 
+                hs.*,
+                -- Bunching rate: % of headways < 50% of median (calculated separately)
+                100.0 * COUNT(*) FILTER (
+                    WHERE ah.headway_minutes < hs.median_headway * 0.5
+                ) / hs.observation_count as bunching_rate
+            FROM headway_stats hs
+            JOIN arrival_headways ah 
+                ON hs.route_name = ah.route_name
+                AND hs.direction = ah.direction
+                AND hs.operator = ah.operator
+                AND hs.stop_id = ah.stop_id
+                AND hs.year = ah.year
+                AND hs.month = ah.month
+                AND hs.day_of_week = ah.day_of_week
+                AND hs.hour = ah.hour
+            WHERE ah.headway_minutes IS NOT NULL
+              AND ah.headway_minutes > 0
+              AND ah.headway_minutes < 120
+            GROUP BY hs.route_name, hs.direction, hs.operator, hs.stop_id, 
+                     hs.year, hs.month, hs.day_of_week, hs.hour,
+                     hs.median_headway, hs.avg_headway, hs.std_headway,
+                     hs.min_headway, hs.max_headway, hs.cv, hs.observation_count
         )
         INSERT INTO headway_patterns (
             route_name, direction, operator, stop_id,
@@ -116,7 +137,7 @@ def aggregate_headway_patterns():
             ROUND(bunching_rate::numeric, 2),
             observation_count,
             NOW()
-        FROM headway_stats
+        FROM bunching_calc
         ON CONFLICT (route_name, direction, operator, stop_id, year, month, day_of_week, hour)
         DO UPDATE SET
             median_headway_minutes = EXCLUDED.median_headway_minutes,
