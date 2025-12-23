@@ -71,6 +71,18 @@ def calculate_component_scores():
         # 1. HEADWAY CONSISTENCY SCORES
         print("1. Calculating headway consistency scores...")
         cur.execute(f"""
+            WITH deduplicated_patterns AS (
+                SELECT 
+                    route_name, direction, operator, year, month, day_of_week, hour,
+                    -- Take most recent values if duplicates exist
+                    MAX(coefficient_of_variation) as coefficient_of_variation,
+                    MAX(bunching_rate) as bunching_rate,
+                    MAX(std_headway_minutes) as std_headway_minutes,
+                    SUM(observation_count) as observation_count
+                FROM headway_patterns
+                WHERE coefficient_of_variation IS NOT NULL
+                GROUP BY route_name, direction, operator, year, month, day_of_week, hour
+            )
             INSERT INTO headway_consistency_scores (
                 route_name, direction, operator, year, month, day_of_week, hour,
                 coefficient_of_variation, bunching_rate, avg_headway_deviation,
@@ -91,8 +103,7 @@ def calculate_component_scores():
                 'C' as grade,  -- Placeholder, will update
                 observation_count,
                 NOW()
-            FROM headway_patterns
-            WHERE coefficient_of_variation IS NOT NULL
+            FROM deduplicated_patterns
             ON CONFLICT (route_name, direction, operator, year, month, day_of_week, hour)
             DO UPDATE SET
                 coefficient_of_variation = EXCLUDED.coefficient_of_variation,
@@ -123,6 +134,17 @@ def calculate_component_scores():
         # 2. SCHEDULE ADHERENCE SCORES
         print("2. Calculating schedule adherence scores...")
         cur.execute(f"""
+            WITH deduplicated_patterns AS (
+                SELECT 
+                    route_name, direction, operator, year, month, day_of_week, hour,
+                    MAX(on_time_percentage) as on_time_percentage,
+                    MAX(avg_deviation_minutes) as avg_deviation_minutes,
+                    MAX(std_deviation_minutes) as std_deviation_minutes,
+                    SUM(observation_count) as observation_count
+                FROM schedule_adherence_patterns
+                WHERE on_time_percentage IS NOT NULL
+                GROUP BY route_name, direction, operator, year, month, day_of_week, hour
+            )
             INSERT INTO schedule_adherence_scores (
                 route_name, direction, operator, year, month, day_of_week, hour,
                 on_time_percentage, avg_deviation_minutes, std_deviation_minutes,
@@ -141,8 +163,7 @@ def calculate_component_scores():
                 'C' as grade,
                 observation_count,
                 NOW()
-            FROM schedule_adherence_patterns
-            WHERE on_time_percentage IS NOT NULL
+            FROM deduplicated_patterns
             ON CONFLICT (route_name, direction, operator, year, month, day_of_week, hour)
             DO UPDATE SET
                 on_time_percentage = EXCLUDED.on_time_percentage,
@@ -232,6 +253,17 @@ def calculate_component_scores():
         # 4. SERVICE DELIVERY SCORES
         print("4. Calculating service delivery scores...")
         cur.execute(f"""
+            WITH deduplicated_patterns AS (
+                SELECT 
+                    route_name, direction, operator, year, month, day_of_week, hour,
+                    MAX(service_delivery_rate) as service_delivery_rate,
+                    SUM(cancelled_trips) as cancelled_trips,
+                    SUM(completed_trips) as completed_trips,
+                    SUM(scheduled_trips) as scheduled_trips
+                FROM service_delivery_patterns
+                WHERE service_delivery_rate IS NOT NULL
+                GROUP BY route_name, direction, operator, year, month, day_of_week, hour
+            )
             INSERT INTO service_delivery_scores (
                 route_name, direction, operator, year, month, day_of_week, hour,
                 service_delivery_rate, cancelled_trip_rate, completed_trips, scheduled_trips,
@@ -251,8 +283,7 @@ def calculate_component_scores():
                 'C' as grade,
                 scheduled_trips,
                 NOW()
-            FROM service_delivery_patterns
-            WHERE service_delivery_rate IS NOT NULL
+            FROM deduplicated_patterns
             ON CONFLICT (route_name, direction, operator, year, month, day_of_week, hour)
             DO UPDATE SET
                 service_delivery_rate = EXCLUDED.service_delivery_rate,
