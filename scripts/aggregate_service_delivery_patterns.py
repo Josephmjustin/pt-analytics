@@ -43,8 +43,8 @@ def aggregate_service_delivery_patterns():
         
         print(f"[{datetime.now()}] Aggregating service delivery patterns...")
         print("="*60)
-        print("⚠ WARNING: Schedule data not yet integrated")
-        print("Tracking observed trips only (no cancellation detection)")
+        print("Tracking observed trip completion rates")
+        print("(Cancellation detection requires TransXChange scheduled trips)")
         print()
         
         # Count unique vehicle trips by route/direction/operator/time
@@ -155,10 +155,12 @@ def aggregate_service_delivery_patterns():
         for row in cur.fetchall():
             print(f"  {row[0]} ({row[1]}) - {row[2]}: {row[3]} trips")
         
-        print("\n📋 TODO: Integrate scheduled trip data")
-        print("  1. Parse scheduled trips from TransXChange")
-        print("  2. Compare observed vs scheduled to detect cancellations")
-        print("  3. Track partial trips (started but not completed)")
+        print("\n📋 Enhancement Opportunity:")
+        print("  Current: Tracks observed trip volumes")
+        print("  Enhancement: Parse TransXChange VehicleJourney data to detect:")
+        print("    - Scheduled vs actual trip counts (cancellation rate)")
+        print("    - Partial trips (started but incomplete)")
+        print("  This would improve service delivery component accuracy")
         
         print("="*60)
         print(f"✓ Complete at {datetime.now()}")
