@@ -214,6 +214,7 @@ def detect_and_match_stops():
                     'vehicle_id': match_result['vehicle_id'],
                     'route_name': match_result['route_name'],
                     'direction': match_result.get('direction'),
+                    'operator': stop_event.get('operator', 'Unknown'),
                     'naptan_id': match_result['naptan_id'],
                     'timestamp': match_result['timestamp'],
                     'distance_m': match_result['distance_m'],
@@ -227,7 +228,7 @@ def detect_and_match_stops():
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS vehicle_arrivals (
                     id SERIAL PRIMARY KEY,
-                    vehicle_id TEXT, route_name TEXT, direction TEXT,
+                    vehicle_id TEXT, route_name TEXT, direction TEXT, operator TEXT,
                     naptan_id TEXT, timestamp TIMESTAMP,
                     distance_m FLOAT, dwell_time_seconds INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -236,10 +237,12 @@ def detect_and_match_stops():
                 ON vehicle_arrivals(route_name, naptan_id, timestamp);
                 CREATE INDEX IF NOT EXISTS idx_arrivals_direction
                 ON vehicle_arrivals(direction);
+                CREATE INDEX IF NOT EXISTS idx_arrivals_operator
+                ON vehicle_arrivals(operator);
             """)
             
             values = [
-                (a['vehicle_id'], a['route_name'], a['direction'],
+                (a['vehicle_id'], a['route_name'], a['direction'], a['operator'],
                  a['naptan_id'], a['timestamp'], a['distance_m'], 
                  a['dwell_time_seconds']) 
                 for a in arrivals
@@ -247,8 +250,8 @@ def detect_and_match_stops():
             
             execute_batch(cur, """
                 INSERT INTO vehicle_arrivals 
-                (vehicle_id, route_name, direction, naptan_id, timestamp, distance_m, dwell_time_seconds)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (vehicle_id, route_name, direction, operator, naptan_id, timestamp, distance_m, dwell_time_seconds)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, values, page_size=1000)
             
             print(f"✓ Inserted {len(arrivals)} arrivals")
