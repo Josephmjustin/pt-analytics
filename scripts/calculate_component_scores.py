@@ -62,10 +62,10 @@ def calculate_component_scores():
             return
         
         print("Using config thresholds:")
-        print(f"  Headway CV: excellent={config[6]}, poor={config[7]}")
-        print(f"  Schedule on-time: excellent={config[8]}%, poor={config[9]}%")
-        print(f"  Journey CV: excellent={config[10]}, poor={config[11]}")
-        print(f"  Service delivery: excellent={config[12]}%, poor={config[13]}%")
+        print(f"  Headway CV: excellent={config[7]}, poor={config[8]}")
+        print(f"  Schedule on-time: excellent={config[9]}%, poor={config[10]}%")
+        print(f"  Journey CV: excellent={config[11]}, poor={config[12]}")
+        print(f"  Service delivery: excellent={config[13]}%, poor={config[14]}%")
         print()
         
         # 1. HEADWAY CONSISTENCY SCORES
@@ -96,8 +96,8 @@ def calculate_component_scores():
                 -- Score calculation: Lower CV = better score
                 GREATEST(0, LEAST(100,
                     100 - (
-                        (coefficient_of_variation - {config[6]}) / 
-                        ({config[7]} - {config[6]})
+                        (coefficient_of_variation - {config[7]}) / 
+                        ({config[8]} - {config[7]})
                     ) * 100
                 ))::DECIMAL(5,2) as score,
                 'C' as grade,  -- Placeholder, will update
@@ -157,8 +157,8 @@ def calculate_component_scores():
                 std_deviation_minutes,
                 -- Score: Higher on-time% = better score
                 GREATEST(0, LEAST(100,
-                    ((on_time_percentage - {config[9]}) / 
-                     ({config[8]} - {config[9]})) * 100
+                    ((on_time_percentage - {config[10]}) / 
+                     ({config[9]} - {config[10]})) * 100
                 ))::DECIMAL(5,2) as score,
                 'C' as grade,
                 observation_count,
@@ -217,7 +217,7 @@ def calculate_component_scores():
                 avg_journey,
                 -- Score: Lower CV = better score
                 GREATEST(0, LEAST(100,
-                    100 - ((avg_cv - {config[10]}) / ({config[11]} - {config[10]})) * 100
+                    100 - ((avg_cv - {config[11]}) / ({config[12]} - {config[11]})) * 100
                 ))::DECIMAL(5,2) as score,
                 'C' as grade,
                 total_observations,
@@ -277,8 +277,8 @@ def calculate_component_scores():
                 scheduled_trips,
                 -- Score: Higher delivery rate = better score
                 GREATEST(0, LEAST(100,
-                    ((service_delivery_rate - {config[13]}) / 
-                     ({config[12]} - {config[13]})) * 100
+                    ((service_delivery_rate - {config[14]}) / 
+                     ({config[13]} - {config[14]})) * 100
                 ))::DECIMAL(5,2) as score,
                 'C' as grade,
                 scheduled_trips,
