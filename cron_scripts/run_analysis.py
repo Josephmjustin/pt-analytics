@@ -27,8 +27,23 @@ try:
     from scripts.aggregate_route_headways import aggregate_route_headways
     from scripts.cleanup_old_data import cleanup_old_data
     HAS_ALL_MODULES = True
+    
+    # SRI pipeline imports (optional - may not be ready yet)
+    try:
+        from scripts.aggregate_headway_patterns import aggregate_headway_patterns
+        from scripts.aggregate_schedule_adherence_patterns import aggregate_schedule_adherence_patterns
+        from scripts.aggregate_journey_time_patterns import aggregate_journey_time_patterns
+        from scripts.aggregate_service_delivery_patterns import aggregate_service_delivery_patterns
+        from scripts.calculate_component_scores import calculate_component_scores
+        from scripts.calculate_sri_scores import calculate_sri_scores
+        HAS_SRI_MODULES = True
+    except ImportError:
+        HAS_SRI_MODULES = False
+        print("Note: SRI modules not available yet")
+        
 except ImportError as e:
     HAS_ALL_MODULES = False
+    HAS_SRI_MODULES = False
     print(f"Warning: Missing module - {e}")
 
 LOCK_FILE = '/tmp/pt_analysis.lock'
@@ -254,6 +269,41 @@ def detect_and_match_stops():
             conn.close()
             print("✓ Connection closed")
 
+def run_sri_calculations():
+    """Run SRI pipeline if modules are available"""
+    if not HAS_SRI_MODULES:
+        print("  ⚠ SRI modules not available - skipping")
+        return
+    
+    try:
+        print("\n📊 Running SRI calculations...")
+        print("-" * 60)
+        
+        print("1/6: Aggregating headway patterns...")
+        aggregate_headway_patterns()
+        
+        print("2/6: Aggregating schedule adherence...")
+        aggregate_schedule_adherence_patterns()
+        
+        print("3/6: Aggregating journey times...")
+        aggregate_journey_time_patterns()
+        
+        print("4/6: Aggregating service delivery...")
+        aggregate_service_delivery_patterns()
+        
+        print("5/6: Calculating component scores...")
+        calculate_component_scores()
+        
+        print("6/6: Calculating final SRI scores...")
+        calculate_sri_scores()
+        
+        print("-" * 60)
+        print("✓ SRI calculations complete")
+        
+    except Exception as e:
+        print(f"⚠ SRI calculation failed: {e}")
+        print("  Continuing with cleanup...")
+
 def run_analysis():
     """Main analysis with proper error handling"""
     print(f"[{datetime.now()}] Starting OPTIMIZED analysis...")
@@ -273,6 +323,9 @@ def run_analysis():
             
             print("Cleaning up old data...")
             cleanup_old_data()
+
+            # Run SRI pipeline (if available)
+            run_sri_calculations()
             
             # Cleanup old arrivals
             conn = None
