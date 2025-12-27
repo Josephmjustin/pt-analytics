@@ -21,6 +21,21 @@ from src.processing.stop_detector import find_stop_events
 from src.api.database import get_db_connection
 from psycopg2.extras import execute_batch, RealDictCursor
 
+# Operator code mapping
+OPERATOR_CODE_MAP = {
+    'A2BV': 'Arriva',
+    'AMSY': 'Arriva',
+    'ANWE': 'Arriva',
+    'SCMY': 'Stagecoach',
+    'SCMR': 'Stagecoach',
+    'FECS': 'First Bus',
+    'FESX': 'First Bus',
+    'NATX': 'National Express',
+    'HATT': 'Hattons',
+    'HUYT': 'Huyton Travel',
+    'HTL': 'Huyton Travel',
+}
+
 try:
     from scripts.calculate_bunching_from_arrivals import calculate_bunching_from_arrivals
     from scripts.aggregate_scores import aggregate_scores
@@ -185,8 +200,22 @@ def detect_and_match_stops():
             conn.commit()
             return 0, 0
         
+        # Convert to dict format with operator field
+        positions_list = [
+            {
+                'vehicle_id': p['vehicle_id'],
+                'route_name': p['route_name'],
+                'direction': p['direction'],
+                'operator': OPERATOR_CODE_MAP.get(p.get('operator', 'Unknown'), p.get('operator', 'Unknown')),
+                'latitude': float(p['latitude']),
+                'longitude': float(p['longitude']),
+                'timestamp': p['timestamp']
+            }
+            for p in positions
+        ]
+        
         # Detect stop events (in-memory, fast)
-        stop_events = find_stop_events(positions)
+        stop_events = find_stop_events(positions_list)
         print(f"Detected {len(stop_events)} stop events")
         
         if not stop_events:
