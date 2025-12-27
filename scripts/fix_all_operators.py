@@ -9,6 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.api.database import get_db_connection
+from psycopg2.extras import RealDictCursor
 
 OPERATOR_CODE_MAP = {
     'A2BV': 'Arriva',
@@ -27,7 +28,7 @@ OPERATOR_CODE_MAP = {
 def check_all_tables():
     """Check operator status in all tables"""
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     
     print("="*80)
     print("CHECKING OPERATORS IN ALL TABLES")
@@ -44,9 +45,9 @@ def check_all_tables():
         LIMIT 10
     """)
     for row in cur.fetchall():
-        mapped = OPERATOR_CODE_MAP.get(row[0], row[0])
-        symbol = "→" if row[0] in OPERATOR_CODE_MAP else " "
-        print(f"   {row[0]:10} {symbol:2} {mapped:20} {row[1]:,} records")
+        mapped = OPERATOR_CODE_MAP.get(row['operator'], row['operator'])
+        symbol = "→" if row['operator'] in OPERATOR_CODE_MAP else " "
+        print(f"   {row['operator']:10} {symbol:2} {mapped:20} {row['count']:,} records")
     
     # 2. vehicle_arrivals
     print("\n2. vehicle_arrivals:")
@@ -57,8 +58,8 @@ def check_all_tables():
         ORDER BY count DESC
     """)
     for row in cur.fetchall():
-        symbol = "✓" if row[0] not in ['Unknown', 'A2BV', 'SCMY', 'AMSY'] else "✗"
-        print(f"   {symbol} {row[0]:20} {row[1]:,} records")
+        symbol = "✓" if row['operator'] not in ['Unknown', 'A2BV', 'SCMY', 'AMSY'] else "✗"
+        print(f"   {symbol} {row['operator']:20} {row['count']:,} records")
     
     # 3. schedule_adherence_patterns
     print("\n3. schedule_adherence_patterns:")
@@ -71,8 +72,8 @@ def check_all_tables():
             LIMIT 10
         """)
         for row in cur.fetchall():
-            symbol = "✓" if row[0] not in ['Unknown', 'A2BV', 'SCMY'] else "✗"
-            print(f"   {symbol} {row[0]:20} {row[1]:,} records")
+            symbol = "✓" if row['operator'] not in ['Unknown', 'A2BV', 'SCMY'] else "✗"
+            print(f"   {symbol} {row['operator']:20} {row['count']:,} records")
     except:
         print("   (table empty or doesn't exist)")
     
