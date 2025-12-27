@@ -273,7 +273,7 @@ def calculate_sri_scores():
                 ROUND(AVG(service_delivery_score)::numeric, 1) as avg_service,
                 NOW()
             FROM service_reliability_index
-            WHERE day_of_week IS NULL AND hour IS NULL  -- Only use monthly route data
+            -- Aggregate from ALL granular data (hourly/daily)
             GROUP BY year, month
             ON CONFLICT (network_name, year, month, day_of_week, hour)
             DO UPDATE SET

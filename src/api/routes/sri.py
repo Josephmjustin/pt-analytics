@@ -82,8 +82,6 @@ def get_network_sri(
             FROM service_reliability_index
             WHERE year = %s 
                 AND month = %s
-                AND day_of_week IS NULL
-                AND hour IS NULL
                 AND operator = %s
         """, (operator.operator_name, year, month, operator.operator_name))
     else:
