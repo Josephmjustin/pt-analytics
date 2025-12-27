@@ -182,8 +182,8 @@ def calculate_sri_scores():
         conn.commit()
         print(f"✓ Upserted {sri_count:,} SRI scores")
         
-        # Calculate network-level aggregates
-        print("\nCalculating network-level aggregates...")
+        # Calculate network-level aggregates (granular - every hour/day)
+        print("\nCalculating network-level aggregates (hourly/daily)...")
         cur.execute("""
             INSERT INTO network_reliability_index (
                 network_name, year, month, day_of_week, hour,
@@ -235,7 +235,122 @@ def calculate_sri_scores():
         """)
         network_count = cur.rowcount
         conn.commit()
-        print(f"✓ Upserted {network_count:,} network aggregate records")
+        print(f"✓ Upserted {network_count:,} hourly/daily network records")
+        
+        # Calculate MONTHLY aggregates (day_of_week=NULL, hour=NULL) - THIS IS WHAT API NEEDS
+        print("\nCalculating monthly aggregates (for API)...")
+        cur.execute("""
+            INSERT INTO network_reliability_index (
+                network_name, year, month, day_of_week, hour,
+                network_sri_score, network_grade,
+                total_routes,
+                routes_grade_a, routes_grade_b, routes_grade_c, routes_grade_d, routes_grade_f,
+                avg_headway_score, avg_schedule_score, avg_journey_time_score, avg_service_delivery_score,
+                calculation_timestamp
+            )
+            SELECT 
+                'Merseyside' as network_name,
+                year, month, 
+                NULL as day_of_week,  -- Monthly aggregate
+                NULL as hour,         -- Monthly aggregate
+                ROUND(AVG(sri_score)::numeric, 2) as network_sri,
+                CASE 
+                    WHEN AVG(sri_score) >= 90 THEN 'A'
+                    WHEN AVG(sri_score) >= 80 THEN 'B'
+                    WHEN AVG(sri_score) >= 70 THEN 'C'
+                    WHEN AVG(sri_score) >= 60 THEN 'D'
+                    ELSE 'F'
+                END as network_grade,
+                COUNT(DISTINCT (route_name, direction, operator)) as total_routes,
+                COUNT(*) FILTER (WHERE sri_grade = 'A') as grade_a,
+                COUNT(*) FILTER (WHERE sri_grade = 'B') as grade_b,
+                COUNT(*) FILTER (WHERE sri_grade = 'C') as grade_c,
+                COUNT(*) FILTER (WHERE sri_grade = 'D') as grade_d,
+                COUNT(*) FILTER (WHERE sri_grade = 'F') as grade_f,
+                ROUND(AVG(headway_consistency_score)::numeric, 1) as avg_headway,
+                ROUND(AVG(schedule_adherence_score)::numeric, 1) as avg_schedule,
+                ROUND(AVG(journey_time_consistency_score)::numeric, 1) as avg_journey,
+                ROUND(AVG(service_delivery_score)::numeric, 1) as avg_service,
+                NOW()
+            FROM service_reliability_index
+            WHERE day_of_week IS NULL AND hour IS NULL  -- Only use monthly route data
+            GROUP BY year, month
+            ON CONFLICT (network_name, year, month, day_of_week, hour)
+            DO UPDATE SET
+                network_sri_score = EXCLUDED.network_sri_score,
+                network_grade = EXCLUDED.network_grade,
+                total_routes = EXCLUDED.total_routes,
+                routes_grade_a = EXCLUDED.routes_grade_a,
+                routes_grade_b = EXCLUDED.routes_grade_b,
+                routes_grade_c = EXCLUDED.routes_grade_c,
+                routes_grade_d = EXCLUDED.routes_grade_d,
+                routes_grade_f = EXCLUDED.routes_grade_f,
+                avg_headway_score = EXCLUDED.avg_headway_score,
+                avg_schedule_score = EXCLUDED.avg_schedule_score,
+                avg_journey_time_score = EXCLUDED.avg_journey_time_score,
+                avg_service_delivery_score = EXCLUDED.avg_service_delivery_score,
+                calculation_timestamp = NOW()
+        """)
+        monthly_count = cur.rowcount
+        conn.commit()
+        print(f"✓ Upserted {monthly_count:,} monthly network records")
+        
+        # Calculate DAILY aggregates (hour=NULL only)
+        print("\nCalculating daily aggregates...")
+        cur.execute("""
+            INSERT INTO network_reliability_index (
+                network_name, year, month, day_of_week, hour,
+                network_sri_score, network_grade,
+                total_routes,
+                routes_grade_a, routes_grade_b, routes_grade_c, routes_grade_d, routes_grade_f,
+                avg_headway_score, avg_schedule_score, avg_journey_time_score, avg_service_delivery_score,
+                calculation_timestamp
+            )
+            SELECT 
+                'Merseyside' as network_name,
+                year, month, day_of_week,
+                NULL as hour,  -- Daily aggregate (averaged across hours)
+                ROUND(AVG(sri_score)::numeric, 2) as network_sri,
+                CASE 
+                    WHEN AVG(sri_score) >= 90 THEN 'A'
+                    WHEN AVG(sri_score) >= 80 THEN 'B'
+                    WHEN AVG(sri_score) >= 70 THEN 'C'
+                    WHEN AVG(sri_score) >= 60 THEN 'D'
+                    ELSE 'F'
+                END as network_grade,
+                COUNT(DISTINCT (route_name, direction, operator)) as total_routes,
+                COUNT(*) FILTER (WHERE sri_grade = 'A') as grade_a,
+                COUNT(*) FILTER (WHERE sri_grade = 'B') as grade_b,
+                COUNT(*) FILTER (WHERE sri_grade = 'C') as grade_c,
+                COUNT(*) FILTER (WHERE sri_grade = 'D') as grade_d,
+                COUNT(*) FILTER (WHERE sri_grade = 'F') as grade_f,
+                ROUND(AVG(headway_consistency_score)::numeric, 1) as avg_headway,
+                ROUND(AVG(schedule_adherence_score)::numeric, 1) as avg_schedule,
+                ROUND(AVG(journey_time_consistency_score)::numeric, 1) as avg_journey,
+                ROUND(AVG(service_delivery_score)::numeric, 1) as avg_service,
+                NOW()
+            FROM service_reliability_index
+            WHERE hour IS NULL  -- Only use daily route data
+            GROUP BY year, month, day_of_week
+            ON CONFLICT (network_name, year, month, day_of_week, hour)
+            DO UPDATE SET
+                network_sri_score = EXCLUDED.network_sri_score,
+                network_grade = EXCLUDED.network_grade,
+                total_routes = EXCLUDED.total_routes,
+                routes_grade_a = EXCLUDED.routes_grade_a,
+                routes_grade_b = EXCLUDED.routes_grade_b,
+                routes_grade_c = EXCLUDED.routes_grade_c,
+                routes_grade_d = EXCLUDED.routes_grade_d,
+                routes_grade_f = EXCLUDED.routes_grade_f,
+                avg_headway_score = EXCLUDED.avg_headway_score,
+                avg_schedule_score = EXCLUDED.avg_schedule_score,
+                avg_journey_time_score = EXCLUDED.avg_journey_time_score,
+                avg_service_delivery_score = EXCLUDED.avg_service_delivery_score,
+                calculation_timestamp = NOW()
+        """)
+        daily_count = cur.rowcount
+        conn.commit()
+        print(f"✓ Upserted {daily_count:,} daily network records")
         
         # Show summary statistics
         print("\n" + "="*60)
