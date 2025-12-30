@@ -51,6 +51,7 @@ try:
         from scripts.aggregate_service_delivery_patterns import aggregate_service_delivery_patterns
         from scripts.calculate_component_scores import calculate_component_scores
         from scripts.calculate_sri_scores import calculate_sri_scores
+        from scripts.create_monthly_daily_aggregates import create_monthly_daily_aggregates
         HAS_SRI_MODULES = True
     except ImportError:
         HAS_SRI_MODULES = False
@@ -311,23 +312,26 @@ def run_sri_calculations():
         print("\n📊 Running SRI calculations...")
         print("-" * 60)
         
-        print("1/6: Aggregating headway patterns...")
+        print("1/7: Aggregating headway patterns...")
         aggregate_headway_patterns()
         
-        print("2/6: Aggregating schedule adherence...")
+        print("2/7: Aggregating schedule adherence...")
         aggregate_schedule_adherence_patterns()
         
-        print("3/6: Aggregating journey times...")
+        print("3/7: Aggregating journey times...")
         aggregate_journey_time_patterns()
         
-        print("4/6: Aggregating service delivery...")
+        print("4/7: Aggregating service delivery...")
         aggregate_service_delivery_patterns()
         
-        print("5/6: Calculating component scores...")
+        print("5/7: Calculating component scores...")
         calculate_component_scores()
         
-        print("6/6: Calculating final SRI scores...")
+        print("6/7: Calculating hourly SRI scores...")
         calculate_sri_scores()
+        
+        print("7/7: Creating daily/monthly aggregates...")
+        create_monthly_daily_aggregates()
         
         print("-" * 60)
         print("✓ SRI calculations complete")

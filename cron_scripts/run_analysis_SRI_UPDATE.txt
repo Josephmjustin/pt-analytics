@@ -1,0 +1,39 @@
+def run_sri_calculations():
+    """Run SRI pipeline if modules are available"""
+    if not HAS_SRI_MODULES:
+        print("  ⚠ SRI modules not available - skipping")
+        return
+    
+    try:
+        print("\n📊 Running SRI calculations...")
+        print("-" * 60)
+        
+        print("1/7: Aggregating headway patterns...")
+        aggregate_headway_patterns()
+        
+        print("2/7: Aggregating schedule adherence...")
+        aggregate_schedule_adherence_patterns()
+        
+        print("3/7: Aggregating journey times...")
+        aggregate_journey_time_patterns()
+        
+        print("4/7: Aggregating service delivery...")
+        aggregate_service_delivery_patterns()
+        
+        print("5/7: Calculating component scores...")
+        calculate_component_scores()
+        
+        print("6/7: Calculating hourly SRI scores...")
+        calculate_sri_scores()
+        
+        print("7/7: Creating daily/monthly aggregates...")
+        # Import and run the aggregation script
+        from scripts.create_monthly_daily_aggregates import create_monthly_daily_aggregates
+        create_monthly_daily_aggregates()
+        
+        print("-" * 60)
+        print("✓ SRI calculations complete")
+        
+    except Exception as e:
+        print(f"⚠ SRI calculation failed: {e}")
+        print("  Continuing with cleanup...")

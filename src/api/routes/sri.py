@@ -11,7 +11,7 @@ def get_network_sri(
     year: Optional[int] = None,
     month: Optional[int] = None
 ):
-    """Get network-level SRI summary"""
+    """Get network-level SRI summary (monthly aggregate)"""
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -24,7 +24,7 @@ def get_network_sri(
     # Get current operator context
     operator = get_current_operator()
     
-    # Get most recent network aggregate for specified period
+    # Monthly aggregate query (day_of_week=NULL, hour=NULL)
     base_query = """
         SELECT 
             network_name,
@@ -41,17 +41,19 @@ def get_network_sri(
             avg_journey_time_score,
             avg_service_delivery_score,
             calculation_timestamp
-        FROM network_reliability_index_monthly
+        FROM network_reliability_index
         WHERE year = %s 
             AND month = %s
+            AND day_of_week IS NULL
+            AND hour IS NULL
         ORDER BY calculation_timestamp DESC
         LIMIT 1
     """
     
-    # Apply operator filter for non-transport-authority users
     params = [year, month]
+    
     if operator.role == "operator":
-        # For operators, calculate network metrics from their routes only
+        # For operators, calculate from their routes
         cur.execute("""
             SELECT 
                 %s as network_name,
@@ -74,13 +76,14 @@ def get_network_sri(
                 ROUND(AVG(journey_time_consistency_score)::numeric, 1) as avg_journey_time_score,
                 ROUND(AVG(service_delivery_score)::numeric, 1) as avg_service_delivery_score,
                 MAX(calculation_timestamp) as calculation_timestamp
-            FROM service_reliability_index_monthly
+            FROM service_reliability_index
             WHERE year = %s 
                 AND month = %s
+                AND day_of_week IS NULL
+                AND hour IS NULL
                 AND operator = %s
         """, (operator.operator_name, year, month, operator.operator_name))
     else:
-        # Transport authority sees actual network aggregate
         cur.execute(base_query, params)
     
     result = cur.fetchone()
@@ -96,6 +99,7 @@ def get_network_sri(
     
     return result
 
+
 @router.get("/routes")
 def get_all_routes_sri(
     year: Optional[int] = None,
@@ -105,20 +109,18 @@ def get_all_routes_sri(
     grade: Optional[str] = None,
     limit: int = Query(default=100, le=1000)
 ):
-    """Get all route-level SRI scores with optional filters"""
+    """Get all route-level SRI scores (monthly aggregates)"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Use current year/month if not specified
     if year is None or month is None:
         now = datetime.now()
         year = year or now.year
         month = month or now.month
     
-    # Get current operator context
     operator = get_current_operator()
     
-    # Build query with filters - use monthly table
+    # Query monthly aggregates only
     base_query = """
         SELECT 
             route_name,
@@ -133,14 +135,14 @@ def get_all_routes_sri(
             observation_count,
             data_completeness,
             calculation_timestamp
-        FROM service_reliability_index_monthly
+        FROM service_reliability_index
         WHERE year = %s 
             AND month = %s
+            AND day_of_week IS NULL
+            AND hour IS NULL
     """
     
     params = [year, month]
-    
-    # Apply operator filter
     query, params = apply_operator_filter(base_query, params)
     
     if min_score is not None:
@@ -171,69 +173,6 @@ def get_all_routes_sri(
         "month": month
     }
 
-@router.get("/routes/{route_name}")
-def get_route_sri(
-    route_name: str,
-    year: Optional[int] = None,
-    month: Optional[int] = None
-):
-    """Get SRI scores for a specific route (all operators/directions)"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    # Use current year/month if not specified
-    if year is None or month is None:
-        now = datetime.now()
-        year = year or now.year
-        month = month or now.month
-    
-    # Get current operator context
-    operator = get_current_operator()
-    
-    # Get all variants of this route - use monthly table
-    base_query = """
-        SELECT 
-            route_name,
-            direction,
-            operator,
-            sri_score,
-            sri_grade,
-            headway_consistency_score,
-            schedule_adherence_score,
-            journey_time_consistency_score,
-            service_delivery_score,
-            observation_count,
-            data_completeness,
-            calculation_timestamp
-        FROM service_reliability_index_monthly
-        WHERE route_name = %s
-            AND year = %s 
-            AND month = %s
-        ORDER BY operator, direction
-    """
-    
-    params = [route_name, year, month]
-    query, params = apply_operator_filter(base_query, params)
-    
-    cur.execute(query, params)
-    
-    routes = cur.fetchall()
-    
-    cur.close()
-    conn.close()
-    
-    if not routes:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No SRI data found for route {route_name} in {year}-{month:02d}"
-        )
-    
-    return {
-        "route_name": route_name,
-        "variants": routes,
-        "year": year,
-        "month": month
-    }
 
 @router.get("/routes/{route_name}/temporal")
 def get_route_temporal_sri(
@@ -243,67 +182,53 @@ def get_route_temporal_sri(
     year: Optional[int] = None,
     month: Optional[int] = None
 ):
-    """
-    Get temporal breakdown (hourly, daily) SRI scores for a specific route variant
-    """
+    """Get hourly/daily breakdown for a route"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Use current year/month if not specified
     if year is None or month is None:
         now = datetime.now()
         year = year or now.year
         month = month or now.month
     
-    # Get current operator context
     operator = get_current_operator()
     
-    # Verify user can access this operator's data
     if not operator.can_access_operator(operator_param):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Access denied: Cannot view data for operator '{operator_param}'"
-        )
+        raise HTTPException(status_code=403, detail="Access denied")
     
-    # Get hourly breakdown - use hourly table
+    # Hourly breakdown
     cur.execute("""
         SELECT 
             hour,
-            AVG(sri_score) as avg_sri_score,
-            AVG(headway_consistency_score) as avg_headway_score,
-            AVG(schedule_adherence_score) as avg_schedule_score,
-            AVG(journey_time_consistency_score) as avg_journey_score,
-            AVG(service_delivery_score) as avg_delivery_score,
-            SUM(observation_count) as total_observations
-        FROM service_reliability_index_hourly
+            sri_score,
+            observation_count
+        FROM service_reliability_index
         WHERE route_name = %s
             AND operator = %s
             AND direction = %s
             AND year = %s 
             AND month = %s
-        GROUP BY hour
-        ORDER BY hour
+            AND day_of_week IS NOT NULL
+            AND hour IS NOT NULL
+        ORDER BY day_of_week, hour
     """, (route_name, operator_param, direction, year, month))
     
     hourly = cur.fetchall()
     
-    # Get daily breakdown - use daily table
+    # Daily breakdown
     cur.execute("""
         SELECT 
             day_of_week,
-            AVG(sri_score) as avg_sri_score,
-            AVG(headway_consistency_score) as avg_headway_score,
-            AVG(schedule_adherence_score) as avg_schedule_score,
-            AVG(journey_time_consistency_score) as avg_journey_score,
-            AVG(service_delivery_score) as avg_delivery_score,
-            SUM(observation_count) as total_observations
-        FROM service_reliability_index_daily
+            sri_score,
+            observation_count
+        FROM service_reliability_index
         WHERE route_name = %s
             AND operator = %s
             AND direction = %s
             AND year = %s 
             AND month = %s
-        GROUP BY day_of_week
+            AND day_of_week IS NOT NULL
+            AND hour IS NULL
         ORDER BY day_of_week
     """, (route_name, operator_param, direction, year, month))
     
@@ -322,144 +247,79 @@ def get_route_temporal_sri(
         "daily": daily
     }
 
-@router.get("/components/{component}")
-def get_component_scores(
-    component: str,
+
+@router.get("/operators/summary")
+def get_operators_summary(
     year: Optional[int] = None,
-    month: Optional[int] = None,
-    limit: int = Query(default=100, le=1000)
+    month: Optional[int] = None
 ):
     """
-    Get top/bottom performers for a specific component
-    Components: headway, schedule, journey_time, service_delivery
+    Get operator-level performance summary (Transport Authority only)
     """
-    # Map component to table
-    table_map = {
-        "headway": "headway_consistency_scores",
-        "schedule": "schedule_adherence_scores",
-        "journey_time": "journey_time_consistency_scores",
-        "service_delivery": "service_delivery_scores"
-    }
+    conn = get_db_connection()
+    cur = conn.cursor()
     
-    if component not in table_map:
+    if year is None or month is None:
+        now = datetime.now()
+        year = year or now.year
+        month = month or now.month
+    
+    operator = get_current_operator()
+    
+    if operator.role == "operator":
         raise HTTPException(
-            status_code=400,
-            detail=f"Invalid component. Must be one of: {', '.join(table_map.keys())}"
+            status_code=403,
+            detail="This endpoint is only available to Transport Authority users"
         )
     
-    conn = get_db_connection()
-    cur = conn.cursor()
+    # Get monthly aggregates grouped by operator
+    cur.execute("""
+        WITH operator_stats AS (
+            SELECT 
+                operator,
+                COUNT(DISTINCT route_name) as total_routes,
+                ROUND(AVG(sri_score)::numeric, 2) as avg_sri_score,
+                CASE 
+                    WHEN AVG(sri_score) >= 90 THEN 'A'
+                    WHEN AVG(sri_score) >= 80 THEN 'B'
+                    WHEN AVG(sri_score) >= 70 THEN 'C'
+                    WHEN AVG(sri_score) >= 60 THEN 'D'
+                    ELSE 'F'
+                END as avg_grade,
+                
+                COUNT(*) FILTER (WHERE sri_grade = 'A') as routes_grade_a,
+                COUNT(*) FILTER (WHERE sri_grade = 'B') as routes_grade_b,
+                COUNT(*) FILTER (WHERE sri_grade = 'C') as routes_grade_c,
+                COUNT(*) FILTER (WHERE sri_grade = 'D') as routes_grade_d,
+                COUNT(*) FILTER (WHERE sri_grade = 'F') as routes_grade_f,
+                
+                ROUND(AVG(headway_consistency_score)::numeric, 1) as avg_headway_score,
+                ROUND(AVG(schedule_adherence_score)::numeric, 1) as avg_schedule_score,
+                ROUND(AVG(journey_time_consistency_score)::numeric, 1) as avg_journey_time_score,
+                ROUND(AVG(service_delivery_score)::numeric, 1) as avg_service_delivery_score,
+                
+                MIN(sri_score) as worst_route_score,
+                MAX(sri_score) as best_route_score
+                
+            FROM service_reliability_index
+            WHERE year = %s 
+                AND month = %s
+                AND day_of_week IS NULL
+                AND hour IS NULL
+            GROUP BY operator
+        )
+        SELECT * FROM operator_stats
+        ORDER BY avg_sri_score DESC
+    """, (year, month))
     
-    # Use current year/month if not specified
-    if year is None or month is None:
-        now = datetime.now()
-        year = year or now.year
-        month = month or now.month
-    
-    # Get current operator context
-    operator = get_current_operator()
-    
-    table = table_map[component]
-    
-    base_query = f"""
-        SELECT 
-            route_name,
-            direction,
-            operator,
-            score,
-            grade,
-            observation_count
-        FROM {table}
-        WHERE year = %s 
-            AND month = %s
-            AND day_of_week IS NULL
-            AND hour IS NULL
-        ORDER BY score DESC
-        LIMIT %s
-    """
-    
-    params = [year, month, limit]
-    query, params = apply_operator_filter(base_query, params)
-    
-    cur.execute(query, params)
-    
-    results = cur.fetchall()
-    
-    cur.close()
-    conn.close()
-    
-    return {
-        "component": component,
-        "routes": results,
-        "count": len(results),
-        "year": year,
-        "month": month
-    }
-
-@router.get("/hotspots")
-def get_hotspots(
-    severity: Optional[str] = None,
-    hotspot_type: Optional[str] = None,
-    year: Optional[int] = None,
-    month: Optional[int] = None,
-    limit: int = Query(default=50, le=500)
-):
-    """Get performance hotspots with optional filters"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    # Use current year/month if not specified
-    if year is None or month is None:
-        now = datetime.now()
-        year = year or now.year
-        month = month or now.month
-    
-    # Get current operator context
-    operator = get_current_operator()
-    
-    base_query = """
-        SELECT 
-            hotspot_type,
-            severity,
-            route_name,
-            direction,
-            operator,
-            stop_id,
-            stop_name,
-            primary_issue,
-            issue_score,
-            affected_metric,
-            trend,
-            last_updated
-        FROM performance_hotspots
-        WHERE year = %s AND month = %s
-    """
-    
-    params = [year, month]
-    
-    if severity:
-        base_query += " AND severity = %s"
-        params.append(severity)
-    
-    if hotspot_type:
-        base_query += " AND hotspot_type = %s"
-        params.append(hotspot_type)
-    
-    base_query += " ORDER BY issue_score DESC LIMIT %s"
-    params.append(limit)
-    
-    # Apply operator filter
-    query, params = apply_operator_filter(base_query, params)
-    
-    cur.execute(query, params)
-    hotspots = cur.fetchall()
+    operators = cur.fetchall()
     
     cur.close()
     conn.close()
     
     return {
-        "hotspots": hotspots,
-        "count": len(hotspots),
+        "operators": operators,
+        "count": len(operators),
         "year": year,
         "month": month
     }
