@@ -25,7 +25,6 @@ def get_network_sri(
     operator = get_current_operator()
     
     # Get most recent network aggregate for specified period
-    # Using monthly aggregates (day_of_week=NULL, hour=NULL)
     base_query = """
         SELECT 
             network_name,
@@ -42,21 +41,17 @@ def get_network_sri(
             avg_journey_time_score,
             avg_service_delivery_score,
             calculation_timestamp
-        FROM network_reliability_index
+        FROM network_reliability_index_monthly
         WHERE year = %s 
             AND month = %s
-            AND day_of_week IS NULL
-            AND hour IS NULL
         ORDER BY calculation_timestamp DESC
         LIMIT 1
     """
     
     # Apply operator filter for non-transport-authority users
-    # Transport authority sees network-wide, operators see only their data
     params = [year, month]
     if operator.role == "operator":
-        # For operators, we need to calculate network metrics from their routes only
-        # This requires a different query that aggregates from service_reliability_index
+        # For operators, calculate network metrics from their routes only
         cur.execute("""
             SELECT 
                 %s as network_name,
@@ -79,7 +74,7 @@ def get_network_sri(
                 ROUND(AVG(journey_time_consistency_score)::numeric, 1) as avg_journey_time_score,
                 ROUND(AVG(service_delivery_score)::numeric, 1) as avg_service_delivery_score,
                 MAX(calculation_timestamp) as calculation_timestamp
-            FROM service_reliability_index
+            FROM service_reliability_index_monthly
             WHERE year = %s 
                 AND month = %s
                 AND operator = %s
@@ -123,7 +118,7 @@ def get_all_routes_sri(
     # Get current operator context
     operator = get_current_operator()
     
-    # Build query with filters
+    # Build query with filters - use monthly table
     base_query = """
         SELECT 
             route_name,
@@ -138,11 +133,9 @@ def get_all_routes_sri(
             observation_count,
             data_completeness,
             calculation_timestamp
-        FROM service_reliability_index
+        FROM service_reliability_index_monthly
         WHERE year = %s 
             AND month = %s
-            AND day_of_week IS NULL
-            AND hour IS NULL
     """
     
     params = [year, month]
@@ -197,7 +190,7 @@ def get_route_sri(
     # Get current operator context
     operator = get_current_operator()
     
-    # Get all variants of this route
+    # Get all variants of this route - use monthly table
     base_query = """
         SELECT 
             route_name,
@@ -212,12 +205,10 @@ def get_route_sri(
             observation_count,
             data_completeness,
             calculation_timestamp
-        FROM service_reliability_index
+        FROM service_reliability_index_monthly
         WHERE route_name = %s
             AND year = %s 
             AND month = %s
-            AND day_of_week IS NULL
-            AND hour IS NULL
         ORDER BY operator, direction
     """
     
@@ -274,7 +265,7 @@ def get_route_temporal_sri(
             detail=f"Access denied: Cannot view data for operator '{operator_param}'"
         )
     
-    # Get hourly breakdown (averaged across all days)
+    # Get hourly breakdown - use hourly table
     cur.execute("""
         SELECT 
             hour,
@@ -284,21 +275,19 @@ def get_route_temporal_sri(
             AVG(journey_time_consistency_score) as avg_journey_score,
             AVG(service_delivery_score) as avg_delivery_score,
             SUM(observation_count) as total_observations
-        FROM service_reliability_index
+        FROM service_reliability_index_hourly
         WHERE route_name = %s
             AND operator = %s
             AND direction = %s
             AND year = %s 
             AND month = %s
-            AND day_of_week IS NULL
-            AND hour IS NOT NULL
         GROUP BY hour
         ORDER BY hour
     """, (route_name, operator_param, direction, year, month))
     
     hourly = cur.fetchall()
     
-    # Get daily breakdown (averaged across all hours)
+    # Get daily breakdown - use daily table
     cur.execute("""
         SELECT 
             day_of_week,
@@ -308,14 +297,12 @@ def get_route_temporal_sri(
             AVG(journey_time_consistency_score) as avg_journey_score,
             AVG(service_delivery_score) as avg_delivery_score,
             SUM(observation_count) as total_observations
-        FROM service_reliability_index
+        FROM service_reliability_index_daily
         WHERE route_name = %s
             AND operator = %s
             AND direction = %s
             AND year = %s 
             AND month = %s
-            AND day_of_week IS NOT NULL
-            AND hour IS NULL
         GROUP BY day_of_week
         ORDER BY day_of_week
     """, (route_name, operator_param, direction, year, month))
@@ -451,11 +438,11 @@ def get_hotspots(
     params = [year, month]
     
     if severity:
-        query += " AND severity = %s"
+        base_query += " AND severity = %s"
         params.append(severity)
     
     if hotspot_type:
-        query += " AND hotspot_type = %s"
+        base_query += " AND hotspot_type = %s"
         params.append(hotspot_type)
     
     base_query += " ORDER BY issue_score DESC LIMIT %s"
