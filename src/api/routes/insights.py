@@ -270,7 +270,7 @@ async def call_groq(prompt: str) -> dict:
                 "Content-Type": "application/json"
             },
             json={
-                "model": "llama-3.2-70b-versatile",
+                "model": "llama-3.3-70b-versatile",
                 "messages": [
                     {"role": "system", "content": "You are a transit analytics expert. Always respond with valid JSON only."},
                     {"role": "user", "content": prompt}
@@ -306,9 +306,26 @@ async def call_groq(prompt: str) -> dict:
 async def generate_insights(request: InsightRequest):
     """Generate AI-powered insights from SRI data"""
     
-    now = datetime.now()
-    year = now.year
-    month = now.month
+    # Find latest available data period
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT year, month FROM service_reliability_index
+        WHERE day_of_week IS NULL AND hour IS NULL
+        ORDER BY year DESC, month DESC
+        LIMIT 1
+    """)
+    latest = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    if latest:
+        year = latest['year']
+        month = latest['month']
+    else:
+        now = datetime.now()
+        year = now.year
+        month = now.month
     
     # Gather requested data
     data = {}

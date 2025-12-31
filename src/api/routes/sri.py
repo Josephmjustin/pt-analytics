@@ -32,11 +32,22 @@ def get_network_sri(
     cur = conn.cursor()
     
     try:
-        # Use current year/month if not specified
+        # If no year/month specified, find the latest available data
         if year is None or month is None:
-            now = datetime.now()
-            year = year or now.year
-            month = month or now.month
+            cur.execute("""
+                SELECT year, month FROM network_reliability_index
+                WHERE day_of_week IS NULL AND hour IS NULL
+                ORDER BY year DESC, month DESC
+                LIMIT 1
+            """)
+            latest = cur.fetchone()
+            if latest:
+                year = latest['year']
+                month = latest['month']
+            else:
+                now = datetime.now()
+                year = year or now.year
+                month = month or now.month
         
         # Get current operator context
         operator = get_current_operator()
@@ -132,10 +143,22 @@ def get_all_routes_sri(
     cur = conn.cursor()
     
     try:
+        # If no year/month specified, find the latest available data
         if year is None or month is None:
-            now = datetime.now()
-            year = year or now.year
-            month = month or now.month
+            cur.execute("""
+                SELECT year, month FROM service_reliability_index
+                WHERE day_of_week IS NULL AND hour IS NULL
+                ORDER BY year DESC, month DESC
+                LIMIT 1
+            """)
+            latest = cur.fetchone()
+            if latest:
+                year = latest['year']
+                month = latest['month']
+            else:
+                now = datetime.now()
+                year = year or now.year
+                month = month or now.month
         
         operator = get_current_operator()
         
@@ -301,10 +324,22 @@ def get_operators_summary(
     cur = conn.cursor()
     
     try:
+        # If no year/month specified, find the latest available data
         if year is None or month is None:
-            now = datetime.now()
-            year = year or now.year
-            month = month or now.month
+            cur.execute("""
+                SELECT year, month FROM service_reliability_index
+                WHERE day_of_week IS NULL AND hour IS NULL
+                ORDER BY year DESC, month DESC
+                LIMIT 1
+            """)
+            latest = cur.fetchone()
+            if latest:
+                year = latest['year']
+                month = latest['month']
+            else:
+                now = datetime.now()
+                year = year or now.year
+                month = month or now.month
         
         operator = get_current_operator()
         
@@ -397,10 +432,22 @@ def get_sri_trends(
     cur = conn.cursor()
     
     try:
+        # If no year/month specified, find the latest available data
         if year is None or month is None:
-            now = datetime.now()
-            year = year or now.year
-            month = month or now.month
+            cur.execute("""
+                SELECT year, month FROM network_reliability_index
+                WHERE day_of_week IS NULL AND hour IS NULL
+                ORDER BY year DESC, month DESC
+                LIMIT 1
+            """)
+            latest = cur.fetchone()
+            if latest:
+                year = latest['year']
+                month = latest['month']
+            else:
+                now = datetime.now()
+                year = year or now.year
+                month = month or now.month
         
         # Hourly pattern (average SRI by hour of day)
         cur.execute("""
