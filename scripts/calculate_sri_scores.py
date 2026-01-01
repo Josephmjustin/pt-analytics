@@ -1,14 +1,14 @@
 """
-Calculate SRI - Final Version
-- Uses DELETE + INSERT for monthly aggregates (NULL handling)
-- Single table for all granularities (hourly, daily, monthly)
-- Fixed table size - no accumulation
+Calculate SRI - Version 3
+- Rolling 30-day average
+- Change from yesterday
+- Fixed table size
 """
 
 import psycopg2
 import os
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -147,14 +147,12 @@ def calculate_sri_scores():
         # ========================================================================
         print("Step 2: Creating route monthly aggregates...")
         
-        # Delete existing monthly aggregates
         cur.execute("""
             DELETE FROM service_reliability_index 
             WHERE day_of_week IS NULL AND hour IS NULL
         """)
         deleted_routes = cur.rowcount
         
-        # Insert fresh monthly aggregates from hourly data
         cur.execute(f"""
         INSERT INTO service_reliability_index (
             route_name, direction, operator, year, month, day_of_week, hour,
@@ -247,51 +245,80 @@ def calculate_sri_scores():
         print(f"  ✓ Upserted {network_count:,} network records (hourly/daily)")
         
         # ========================================================================
-        # Step 4: Create Network MONTHLY aggregate
-        # DELETE + INSERT (ON CONFLICT doesn't work with NULLs)
+        # Step 4: Create Network MONTHLY aggregate with rolling 30-day & daily change
         # ========================================================================
-        print("Step 4: Creating network monthly aggregate...")
+        print("Step 4: Creating network monthly aggregate with rolling stats...")
         
-        # Delete existing monthly aggregates
         cur.execute("""
             DELETE FROM network_reliability_index 
             WHERE day_of_week IS NULL AND hour IS NULL
         """)
         deleted_network = cur.rowcount
         
-        # Insert fresh monthly aggregates from route monthly data
+        # Calculate rolling 30-day average and yesterday's SRI
         cur.execute("""
+        WITH rolling_stats AS (
+            -- Rolling 30-day average from all hourly data
+            SELECT 
+                ROUND(AVG(sri_score)::numeric, 2) as rolling_30d_sri
+            FROM service_reliability_index
+            WHERE calculation_timestamp >= NOW() - INTERVAL '30 days'
+              AND hour IS NOT NULL AND day_of_week IS NOT NULL
+        ),
+        yesterday_stats AS (
+            -- Yesterday's average (day_of_week for yesterday)
+            SELECT 
+                ROUND(AVG(sri_score)::numeric, 2) as yesterday_sri
+            FROM service_reliability_index
+            WHERE day_of_week = EXTRACT(DOW FROM NOW() - INTERVAL '1 day')::int
+              AND hour IS NOT NULL
+        ),
+        today_stats AS (
+            -- Today's average
+            SELECT 
+                ROUND(AVG(sri_score)::numeric, 2) as today_sri
+            FROM service_reliability_index
+            WHERE day_of_week = EXTRACT(DOW FROM NOW())::int
+              AND hour IS NOT NULL
+        )
         INSERT INTO network_reliability_index (
             network_name, year, month, day_of_week, hour,
             network_sri_score, network_grade, total_routes,
             routes_grade_a, routes_grade_b, routes_grade_c, routes_grade_d, routes_grade_f,
             avg_headway_score, avg_schedule_score, avg_journey_time_score, avg_service_delivery_score,
-            observation_count
+            observation_count,
+            rolling_30d_sri, yesterday_sri, change_from_yesterday
         )
         SELECT 
-            'Merseyside', year, month, NULL, NULL,
-            ROUND(AVG(sri_score)::numeric, 2),
+            'Merseyside', sri.year, sri.month, NULL, NULL,
+            ROUND(AVG(sri.sri_score)::numeric, 2),
             CASE 
-                WHEN AVG(sri_score) >= 90 THEN 'A'
-                WHEN AVG(sri_score) >= 80 THEN 'B'
-                WHEN AVG(sri_score) >= 70 THEN 'C'
-                WHEN AVG(sri_score) >= 60 THEN 'D'
+                WHEN AVG(sri.sri_score) >= 90 THEN 'A'
+                WHEN AVG(sri.sri_score) >= 80 THEN 'B'
+                WHEN AVG(sri.sri_score) >= 70 THEN 'C'
+                WHEN AVG(sri.sri_score) >= 60 THEN 'D'
                 ELSE 'F'
             END,
-            COUNT(DISTINCT (route_name, direction, operator)),
-            COUNT(*) FILTER (WHERE sri_grade = 'A'),
-            COUNT(*) FILTER (WHERE sri_grade = 'B'),
-            COUNT(*) FILTER (WHERE sri_grade = 'C'),
-            COUNT(*) FILTER (WHERE sri_grade = 'D'),
-            COUNT(*) FILTER (WHERE sri_grade = 'F'),
-            ROUND(AVG(headway_consistency_score)::numeric, 1),
-            ROUND(AVG(schedule_adherence_score)::numeric, 1),
-            ROUND(AVG(journey_time_consistency_score)::numeric, 1),
-            ROUND(AVG(service_delivery_score)::numeric, 1),
-            SUM(observation_count)
-        FROM service_reliability_index
-        WHERE day_of_week IS NULL AND hour IS NULL
-        GROUP BY year, month
+            COUNT(DISTINCT (sri.route_name, sri.direction, sri.operator)),
+            COUNT(*) FILTER (WHERE sri.sri_grade = 'A'),
+            COUNT(*) FILTER (WHERE sri.sri_grade = 'B'),
+            COUNT(*) FILTER (WHERE sri.sri_grade = 'C'),
+            COUNT(*) FILTER (WHERE sri.sri_grade = 'D'),
+            COUNT(*) FILTER (WHERE sri.sri_grade = 'F'),
+            ROUND(AVG(sri.headway_consistency_score)::numeric, 1),
+            ROUND(AVG(sri.schedule_adherence_score)::numeric, 1),
+            ROUND(AVG(sri.journey_time_consistency_score)::numeric, 1),
+            ROUND(AVG(sri.service_delivery_score)::numeric, 1),
+            SUM(sri.observation_count),
+            rs.rolling_30d_sri,
+            ys.yesterday_sri,
+            ROUND((ts.today_sri - ys.yesterday_sri)::numeric, 2)
+        FROM service_reliability_index sri
+        CROSS JOIN rolling_stats rs
+        CROSS JOIN yesterday_stats ys
+        CROSS JOIN today_stats ts
+        WHERE sri.day_of_week IS NULL AND sri.hour IS NULL
+        GROUP BY sri.year, sri.month, rs.rolling_30d_sri, ys.yesterday_sri, ts.today_sri
         """)
         monthly_network_count = cur.rowcount
         conn.commit()
@@ -314,7 +341,10 @@ def calculate_sri_scores():
                 routes_grade_b,
                 routes_grade_c,
                 routes_grade_d,
-                routes_grade_f
+                routes_grade_f,
+                rolling_30d_sri,
+                yesterday_sri,
+                change_from_yesterday
             FROM network_reliability_index
             WHERE day_of_week IS NULL AND hour IS NULL
             ORDER BY year DESC, month DESC
@@ -322,9 +352,10 @@ def calculate_sri_scores():
         results = cur.fetchall()
         
         for row in results:
-            year, month, sri, grade, total, a, b, c, d, f = row
+            year, month, sri, grade, total, a, b, c, d, f, rolling, yesterday, change = row
             print(f"\n{year}-{month:02d}: SRI {sri}/100 (Grade {grade})")
             print(f"  Routes: {total} | A:{a} B:{b} C:{c} D:{d} F:{f}")
+            print(f"  Rolling 30d: {rolling} | Yesterday: {yesterday} | Change: {change or 0:+.2f}")
         
         print("\n" + "="*60)
         print(f"✓ Complete at {datetime.now()}")
