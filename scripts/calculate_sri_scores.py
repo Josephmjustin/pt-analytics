@@ -1,6 +1,6 @@
 """
-Calculate SRI with Running Averages - Fixed Table Size Forever
-Updates existing rows instead of creating new ones
+Calculate SRI with Running Averages - FIXED VERSION
+Replaces values instead of accumulating
 """
 
 import psycopg2
@@ -20,8 +20,7 @@ DB_CONFIG = {
 
 def calculate_sri_scores():
     """
-    Calculate SRI scores with running averages
-    Single table with hourly/daily/monthly all in one
+    Calculate SRI scores - FIXED to replace not accumulate
     """
     
     conn = None
@@ -29,7 +28,7 @@ def calculate_sri_scores():
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         
-        print(f"[{datetime.now()}] Calculating SRI scores (running averages)...")
+        print(f"[{datetime.now()}] Calculating SRI scores...")
         print("="*60)
         
         # Get config weights
@@ -47,13 +46,13 @@ def calculate_sri_scores():
             'service': config[6]
         }
         
-        print(f"Using weights: H:{weights['headway']*100}% S:{weights['schedule']*100}% " +
-              f"J:{weights['journey']*100}% D:{weights['service']*100}%\n")
+        print(f"Using weights: H:{weights['headway']}% S:{weights['schedule']}% " +
+              f"J:{weights['journey']}% D:{weights['service']}%\n")
         
         # ========================================================================
-        # Calculate Route-Level SRI - All granularities (hourly, daily, monthly)
+        # Calculate Route-Level SRI
         # ========================================================================
-        print("Calculating route SRI (hourly/daily/monthly)...")
+        print("Calculating route SRI...")
         cur.execute(f"""
         WITH component_scores AS (
             SELECT 
@@ -136,7 +135,8 @@ def calculate_sri_scores():
             service_delivery_score = EXCLUDED.service_delivery_score,
             sri_score = EXCLUDED.sri_score,
             sri_grade = EXCLUDED.sri_grade,
-            observation_count = service_reliability_index.observation_count + EXCLUDED.observation_count,
+            observation_count = EXCLUDED.observation_count,  -- FIXED: Replace, don't add
+            data_completeness = EXCLUDED.data_completeness,
             calculation_timestamp = NOW()
         """)
         route_count = cur.rowcount
@@ -144,9 +144,9 @@ def calculate_sri_scores():
         print(f"✓ Upserted {route_count:,} route SRI records")
         
         # ========================================================================
-        # Calculate Network-Level - All granularities
+        # Calculate Network-Level - FIXED: Replace all values, don't accumulate
         # ========================================================================
-        print("Calculating network SRI (hourly/daily/monthly)...")
+        print("Calculating network SRI...")
         cur.execute("""
         INSERT INTO network_reliability_index (
             network_name, year, month, day_of_week, hour,
@@ -192,7 +192,7 @@ def calculate_sri_scores():
             avg_schedule_score = EXCLUDED.avg_schedule_score,
             avg_journey_time_score = EXCLUDED.avg_journey_time_score,
             avg_service_delivery_score = EXCLUDED.avg_service_delivery_score,
-            observation_count = network_reliability_index.observation_count + EXCLUDED.observation_count,
+            observation_count = EXCLUDED.observation_count,  -- FIXED: Replace, don't add
             calculation_timestamp = NOW()
         """)
         network_count = cur.rowcount
@@ -206,29 +206,17 @@ def calculate_sri_scores():
         print("SRI SUMMARY")
         print("="*60)
         
-        # Show table sizes
-        cur.execute("""
-            SELECT 
-                COUNT(*) FILTER (WHERE day_of_week IS NULL AND hour IS NULL) as monthly,
-                COUNT(*) FILTER (WHERE day_of_week IS NOT NULL AND hour IS NULL) as daily,
-                COUNT(*) FILTER (WHERE day_of_week IS NOT NULL AND hour IS NOT NULL) as hourly,
-                COUNT(*) as total
-            FROM service_reliability_index
-        """)
-        counts = cur.fetchone()
-        
-        print(f"\nRoute SRI records:")
-        print(f"  Monthly: {counts[0]:,}")
-        print(f"  Daily: {counts[1]:,}")
-        print(f"  Hourly: {counts[2]:,}")
-        print(f"  Total: {counts[3]:,} (FIXED - won't grow!)")
-        
         # Network overview
         cur.execute("""
             SELECT 
                 network_sri_score,
                 network_grade,
-                total_routes
+                total_routes,
+                routes_grade_a,
+                routes_grade_b,
+                routes_grade_c,
+                routes_grade_d,
+                routes_grade_f
             FROM network_reliability_index
             WHERE day_of_week IS NULL AND hour IS NULL
             ORDER BY calculation_timestamp DESC
@@ -239,6 +227,7 @@ def calculate_sri_scores():
         if overview:
             print(f"\nNetwork SRI: {overview[0]}/100 (Grade: {overview[1]})")
             print(f"Total routes: {overview[2]}")
+            print(f"Grade distribution: A:{overview[3]} B:{overview[4]} C:{overview[5]} D:{overview[6]} F:{overview[7]}")
         
         print("\n" + "="*60)
         print(f"✓ Complete at {datetime.now()}")
