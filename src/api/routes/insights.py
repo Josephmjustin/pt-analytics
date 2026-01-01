@@ -281,8 +281,7 @@ async def call_groq(prompt: str) -> dict:
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.2,
-                "max_tokens": 4096,
-                "response_format": {"type": "json_object"}
+                "max_tokens": 4096
             }
         )
         
