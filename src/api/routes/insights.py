@@ -277,11 +277,12 @@ async def call_groq(prompt: str) -> dict:
             json={
                 "model": "llama-3.3-70b-versatile",
                 "messages": [
-                    {"role": "system", "content": "You are a transit analytics expert. Always respond with valid JSON only."},
+                    {"role": "system", "content": "You are a transit analytics expert. You MUST respond with valid JSON only. No markdown, no explanations, just pure JSON."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.3,
-                "max_tokens": 4096
+                "temperature": 0.2,
+                "max_tokens": 4096,
+                "response_format": {"type": "json_object"}
             }
         )
         
@@ -296,14 +297,32 @@ async def call_groq(prompt: str) -> dict:
             # Clean up potential markdown code blocks
             content = content.strip()
             if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
+                # Extract content between code blocks
+                parts = content.split("```")
+                if len(parts) >= 2:
+                    content = parts[1]
+                    if content.startswith("json"):
+                        content = content[4:]
             content = content.strip()
+            
+            # Try to find JSON object in the response
+            start_idx = content.find("{")
+            end_idx = content.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                content = content[start_idx:end_idx + 1]
             
             return json.loads(content)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to parse LLM response: {str(e)}")
+            # Return a default response if parsing fails
+            print(f"JSON parse error: {e}")
+            print(f"Raw content: {content[:500]}")
+            return {
+                "executive_summary": "Unable to generate detailed analysis due to a processing error. Please try again.",
+                "key_findings": ["Analysis generation encountered an error"],
+                "critical_issues": [],
+                "opportunities": [],
+                "recommendations": []
+            }
 
 
 @router.post("/generate", response_model=InsightResponse)
