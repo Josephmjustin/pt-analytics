@@ -68,6 +68,9 @@ def get_network_sri(
                 avg_schedule_score,
                 avg_journey_time_score,
                 avg_service_delivery_score,
+                rolling_30d_sri,
+                yesterday_sri,
+                change_from_yesterday,
                 calculation_timestamp
             FROM network_reliability_index
             WHERE year = %s 
@@ -103,6 +106,9 @@ def get_network_sri(
                     ROUND(AVG(schedule_adherence_score)::numeric, 1) as avg_schedule_score,
                     ROUND(AVG(journey_time_consistency_score)::numeric, 1) as avg_journey_time_score,
                     ROUND(AVG(service_delivery_score)::numeric, 1) as avg_service_delivery_score,
+                    NULL as rolling_30d_sri,
+                    NULL as yesterday_sri,
+                    NULL as change_from_yesterday,
                     MAX(calculation_timestamp) as calculation_timestamp
                 FROM service_reliability_index
                 WHERE year = %s 
@@ -127,7 +133,7 @@ def get_network_sri(
     finally:
         cur.close()
         conn.close()
-
+        
 
 @router.get("/routes")
 def get_all_routes_sri(
