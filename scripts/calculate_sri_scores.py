@@ -1,6 +1,6 @@
 """
-Calculate SRI with Running Averages - FIXED VERSION
-Replaces values instead of accumulating
+Calculate SRI - Version 2
+Creates monthly aggregates from daily data at each level
 """
 
 import psycopg2
@@ -19,10 +19,6 @@ DB_CONFIG = {
 }
 
 def calculate_sri_scores():
-    """
-    Calculate SRI scores - FIXED to replace not accumulate
-    """
-    
     conn = None
     try:
         conn = psycopg2.connect(**DB_CONFIG)
@@ -46,13 +42,13 @@ def calculate_sri_scores():
             'service': config[6]
         }
         
-        print(f"Using weights: H:{weights['headway']}% S:{weights['schedule']}% " +
-              f"J:{weights['journey']}% D:{weights['service']}%\n")
+        print(f"Using weights: H:{weights['headway']*100:.0f}% S:{weights['schedule']*100:.0f}% " +
+              f"J:{weights['journey']*100:.0f}% D:{weights['service']*100:.0f}%\n")
         
         # ========================================================================
-        # Calculate Route-Level SRI
+        # Step 1: Calculate Route SRI from component scores (daily/hourly)
         # ========================================================================
-        print("Calculating route SRI...")
+        print("Step 1: Calculating route SRI from component scores (daily/hourly)...")
         cur.execute(f"""
         WITH component_scores AS (
             SELECT 
@@ -135,18 +131,69 @@ def calculate_sri_scores():
             service_delivery_score = EXCLUDED.service_delivery_score,
             sri_score = EXCLUDED.sri_score,
             sri_grade = EXCLUDED.sri_grade,
-            observation_count = EXCLUDED.observation_count,  -- FIXED: Replace, don't add
+            observation_count = EXCLUDED.observation_count,
             data_completeness = EXCLUDED.data_completeness,
             calculation_timestamp = NOW()
         """)
         route_count = cur.rowcount
         conn.commit()
-        print(f"✓ Upserted {route_count:,} route SRI records")
+        print(f"  ✓ Upserted {route_count:,} route SRI records (daily/hourly)")
         
         # ========================================================================
-        # Calculate Network-Level - FIXED: Replace all values, don't accumulate
+        # Step 2: Create Route MONTHLY aggregates (day_of_week=NULL, hour=NULL)
+        # Aggregate from daily data (hour=NULL rows)
         # ========================================================================
-        print("Calculating network SRI...")
+        print("Step 2: Creating route monthly aggregates from daily data...")
+        cur.execute(f"""
+        INSERT INTO service_reliability_index (
+            route_name, direction, operator, year, month, day_of_week, hour,
+            headway_consistency_score, schedule_adherence_score, 
+            journey_time_consistency_score, service_delivery_score,
+            headway_weight, schedule_weight, journey_time_weight, service_delivery_weight,
+            sri_score, sri_grade, observation_count, data_completeness
+        )
+        SELECT 
+            route_name, direction, operator, year, month, 
+            NULL as day_of_week, 
+            NULL as hour,
+            ROUND(AVG(headway_consistency_score)::numeric, 2),
+            ROUND(AVG(schedule_adherence_score)::numeric, 2),
+            ROUND(AVG(journey_time_consistency_score)::numeric, 2),
+            ROUND(AVG(service_delivery_score)::numeric, 2),
+            {weights['headway']}, {weights['schedule']}, {weights['journey']}, {weights['service']},
+            ROUND(AVG(sri_score)::numeric, 2),
+            CASE 
+                WHEN AVG(sri_score) >= 90 THEN 'A'
+                WHEN AVG(sri_score) >= 80 THEN 'B'
+                WHEN AVG(sri_score) >= 70 THEN 'C'
+                WHEN AVG(sri_score) >= 60 THEN 'D'
+                ELSE 'F'
+            END,
+            SUM(observation_count),
+            ROUND(AVG(data_completeness)::numeric, 2)
+        FROM service_reliability_index
+        WHERE hour IS NULL AND day_of_week IS NOT NULL
+        GROUP BY route_name, direction, operator, year, month
+        ON CONFLICT (route_name, direction, operator, year, month, day_of_week, hour)
+        DO UPDATE SET
+            headway_consistency_score = EXCLUDED.headway_consistency_score,
+            schedule_adherence_score = EXCLUDED.schedule_adherence_score,
+            journey_time_consistency_score = EXCLUDED.journey_time_consistency_score,
+            service_delivery_score = EXCLUDED.service_delivery_score,
+            sri_score = EXCLUDED.sri_score,
+            sri_grade = EXCLUDED.sri_grade,
+            observation_count = EXCLUDED.observation_count,
+            data_completeness = EXCLUDED.data_completeness,
+            calculation_timestamp = NOW()
+        """)
+        monthly_route_count = cur.rowcount
+        conn.commit()
+        print(f"  ✓ Upserted {monthly_route_count:,} route monthly aggregates")
+        
+        # ========================================================================
+        # Step 3: Calculate Network SRI (hourly/daily)
+        # ========================================================================
+        print("Step 3: Calculating network SRI (hourly/daily)...")
         cur.execute("""
         INSERT INTO network_reliability_index (
             network_name, year, month, day_of_week, hour,
@@ -177,6 +224,7 @@ def calculate_sri_scores():
             ROUND(AVG(service_delivery_score)::numeric, 1),
             SUM(observation_count)
         FROM service_reliability_index
+        WHERE day_of_week IS NOT NULL
         GROUP BY year, month, day_of_week, hour
         ON CONFLICT (network_name, year, month, day_of_week, hour)
         DO UPDATE SET
@@ -192,12 +240,71 @@ def calculate_sri_scores():
             avg_schedule_score = EXCLUDED.avg_schedule_score,
             avg_journey_time_score = EXCLUDED.avg_journey_time_score,
             avg_service_delivery_score = EXCLUDED.avg_service_delivery_score,
-            observation_count = EXCLUDED.observation_count,  -- FIXED: Replace, don't add
+            observation_count = EXCLUDED.observation_count,
             calculation_timestamp = NOW()
         """)
         network_count = cur.rowcount
         conn.commit()
-        print(f"✓ Upserted {network_count:,} network records")
+        print(f"  ✓ Upserted {network_count:,} network records (hourly/daily)")
+        
+        # ========================================================================
+        # Step 4: Create Network MONTHLY aggregate from route monthly data
+        # ========================================================================
+        print("Step 4: Creating network monthly aggregate...")
+        cur.execute("""
+        INSERT INTO network_reliability_index (
+            network_name, year, month, day_of_week, hour,
+            network_sri_score, network_grade, total_routes,
+            routes_grade_a, routes_grade_b, routes_grade_c, routes_grade_d, routes_grade_f,
+            avg_headway_score, avg_schedule_score, avg_journey_time_score, avg_service_delivery_score,
+            observation_count
+        )
+        SELECT 
+            'Merseyside', year, month, 
+            NULL as day_of_week, 
+            NULL as hour,
+            ROUND(AVG(sri_score)::numeric, 2),
+            CASE 
+                WHEN AVG(sri_score) >= 90 THEN 'A'
+                WHEN AVG(sri_score) >= 80 THEN 'B'
+                WHEN AVG(sri_score) >= 70 THEN 'C'
+                WHEN AVG(sri_score) >= 60 THEN 'D'
+                ELSE 'F'
+            END,
+            COUNT(DISTINCT (route_name, direction, operator)),
+            COUNT(*) FILTER (WHERE sri_grade = 'A'),
+            COUNT(*) FILTER (WHERE sri_grade = 'B'),
+            COUNT(*) FILTER (WHERE sri_grade = 'C'),
+            COUNT(*) FILTER (WHERE sri_grade = 'D'),
+            COUNT(*) FILTER (WHERE sri_grade = 'F'),
+            ROUND(AVG(headway_consistency_score)::numeric, 1),
+            ROUND(AVG(schedule_adherence_score)::numeric, 1),
+            ROUND(AVG(journey_time_consistency_score)::numeric, 1),
+            ROUND(AVG(service_delivery_score)::numeric, 1),
+            SUM(observation_count)
+        FROM service_reliability_index
+        WHERE day_of_week IS NULL AND hour IS NULL
+        GROUP BY year, month
+        ON CONFLICT (network_name, year, month, day_of_week, hour)
+        DO UPDATE SET
+            network_sri_score = EXCLUDED.network_sri_score,
+            network_grade = EXCLUDED.network_grade,
+            total_routes = EXCLUDED.total_routes,
+            routes_grade_a = EXCLUDED.routes_grade_a,
+            routes_grade_b = EXCLUDED.routes_grade_b,
+            routes_grade_c = EXCLUDED.routes_grade_c,
+            routes_grade_d = EXCLUDED.routes_grade_d,
+            routes_grade_f = EXCLUDED.routes_grade_f,
+            avg_headway_score = EXCLUDED.avg_headway_score,
+            avg_schedule_score = EXCLUDED.avg_schedule_score,
+            avg_journey_time_score = EXCLUDED.avg_journey_time_score,
+            avg_service_delivery_score = EXCLUDED.avg_service_delivery_score,
+            observation_count = EXCLUDED.observation_count,
+            calculation_timestamp = NOW()
+        """)
+        monthly_network_count = cur.rowcount
+        conn.commit()
+        print(f"  ✓ Upserted {monthly_network_count:,} network monthly aggregate")
         
         # ========================================================================
         # Summary
@@ -206,7 +313,6 @@ def calculate_sri_scores():
         print("SRI SUMMARY")
         print("="*60)
         
-        # Network overview
         cur.execute("""
             SELECT 
                 network_sri_score,
@@ -219,7 +325,7 @@ def calculate_sri_scores():
                 routes_grade_f
             FROM network_reliability_index
             WHERE day_of_week IS NULL AND hour IS NULL
-            ORDER BY calculation_timestamp DESC
+            ORDER BY year DESC, month DESC
             LIMIT 1
         """)
         overview = cur.fetchone()
@@ -228,6 +334,10 @@ def calculate_sri_scores():
             print(f"\nNetwork SRI: {overview[0]}/100 (Grade: {overview[1]})")
             print(f"Total routes: {overview[2]}")
             print(f"Grade distribution: A:{overview[3]} B:{overview[4]} C:{overview[5]} D:{overview[6]} F:{overview[7]}")
+            total_grades = overview[3] + overview[4] + overview[5] + overview[6] + overview[7]
+            print(f"Sum of grades: {total_grades}")
+        else:
+            print("\nNo monthly aggregate found!")
         
         print("\n" + "="*60)
         print(f"✓ Complete at {datetime.now()}")
