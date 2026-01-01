@@ -1,5 +1,5 @@
 """
-AI Insights Generation using Groq (Llama 3.2)
+AI Insights Generation using Groq (Llama 3.3)
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -7,6 +7,7 @@ from typing import Optional, List
 from datetime import datetime
 import httpx
 import os
+import json
 from src.api.database import get_db_connection
 
 router = APIRouter(prefix="/insights", tags=["insights"])
@@ -38,31 +39,32 @@ def get_network_data(year: int, month: int) -> dict:
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("""
-        SELECT 
-            network_sri_score,
-            network_grade,
-            total_routes,
-            routes_grade_a,
-            routes_grade_b,
-            routes_grade_c,
-            routes_grade_d,
-            routes_grade_f,
-            avg_headway_score,
-            avg_schedule_score,
-            avg_journey_time_score,
-            avg_service_delivery_score
-        FROM network_reliability_index
-        WHERE year = %s AND month = %s
-            AND day_of_week IS NULL AND hour IS NULL
-        LIMIT 1
-    """, (year, month))
-    
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-    
-    return dict(result) if result else {}
+    try:
+        cur.execute("""
+            SELECT 
+                network_sri_score,
+                network_grade,
+                total_routes,
+                routes_grade_a,
+                routes_grade_b,
+                routes_grade_c,
+                routes_grade_d,
+                routes_grade_f,
+                avg_headway_score,
+                avg_schedule_score,
+                avg_journey_time_score,
+                avg_service_delivery_score
+            FROM network_reliability_index
+            WHERE year = %s AND month = %s
+                AND day_of_week IS NULL AND hour IS NULL
+            LIMIT 1
+        """, (year, month))
+        
+        result = cur.fetchone()
+        return dict(result) if result else {}
+    finally:
+        cur.close()
+        conn.close()
 
 
 def get_routes_data(year: int, month: int, limit: int = 100) -> List[dict]:
@@ -70,30 +72,31 @@ def get_routes_data(year: int, month: int, limit: int = 100) -> List[dict]:
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("""
-        SELECT 
-            route_name,
-            direction,
-            operator,
-            sri_score,
-            sri_grade,
-            headway_consistency_score,
-            schedule_adherence_score,
-            journey_time_consistency_score,
-            service_delivery_score,
-            data_completeness
-        FROM service_reliability_index
-        WHERE year = %s AND month = %s
-            AND day_of_week IS NULL AND hour IS NULL
-        ORDER BY sri_score ASC
-        LIMIT %s
-    """, (year, month, limit))
-    
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    return [dict(r) for r in results]
+    try:
+        cur.execute("""
+            SELECT 
+                route_name,
+                direction,
+                operator,
+                sri_score,
+                sri_grade,
+                headway_consistency_score,
+                schedule_adherence_score,
+                journey_time_consistency_score,
+                service_delivery_score,
+                data_completeness
+            FROM service_reliability_index
+            WHERE year = %s AND month = %s
+                AND day_of_week IS NULL AND hour IS NULL
+            ORDER BY sri_score ASC
+            LIMIT %s
+        """, (year, month, limit))
+        
+        results = cur.fetchall()
+        return [dict(r) for r in results]
+    finally:
+        cur.close()
+        conn.close()
 
 
 def get_operators_data(year: int, month: int) -> List[dict]:
@@ -101,35 +104,36 @@ def get_operators_data(year: int, month: int) -> List[dict]:
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("""
-        WITH normalized AS (
+    try:
+        cur.execute("""
+            WITH normalized AS (
+                SELECT 
+                    CASE 
+                        WHEN operator IN ('Arriva Merseyside', 'Arriva Northwest', 'Arriva North West') THEN 'Arriva'
+                        WHEN operator IN ('Stagecoach Merseyside', 'Stagecoach Merseyside and South Lancashire') THEN 'Stagecoach'
+                        ELSE operator
+                    END as operator,
+                    sri_score,
+                    sri_grade
+                FROM service_reliability_index
+                WHERE year = %s AND month = %s
+                    AND day_of_week IS NULL AND hour IS NULL
+            )
             SELECT 
-                CASE 
-                    WHEN operator IN ('Arriva Merseyside', 'Arriva Northwest', 'Arriva North West') THEN 'Arriva'
-                    WHEN operator IN ('Stagecoach Merseyside', 'Stagecoach Merseyside and South Lancashire') THEN 'Stagecoach'
-                    ELSE operator
-                END as operator,
-                sri_score,
-                sri_grade
-            FROM service_reliability_index
-            WHERE year = %s AND month = %s
-                AND day_of_week IS NULL AND hour IS NULL
-        )
-        SELECT 
-            operator,
-            COUNT(*) as route_count,
-            ROUND(AVG(sri_score)::numeric, 1) as avg_sri,
-            COUNT(*) FILTER (WHERE sri_grade = 'F') as failing_routes
-        FROM normalized
-        GROUP BY operator
-        ORDER BY avg_sri DESC
-    """, (year, month))
-    
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    return [dict(r) for r in results]
+                operator,
+                COUNT(*) as route_count,
+                ROUND(AVG(sri_score)::numeric, 1) as avg_sri,
+                COUNT(*) FILTER (WHERE sri_grade = 'F') as failing_routes
+            FROM normalized
+            GROUP BY operator
+            ORDER BY avg_sri DESC
+        """, (year, month))
+        
+        results = cur.fetchall()
+        return [dict(r) for r in results]
+    finally:
+        cur.close()
+        conn.close()
 
 
 def get_trends_data(year: int, month: int) -> dict:
@@ -137,32 +141,33 @@ def get_trends_data(year: int, month: int) -> dict:
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Hourly patterns
-    cur.execute("""
-        SELECT hour, ROUND(AVG(network_sri_score)::numeric, 1) as sri
-        FROM network_reliability_index
-        WHERE year = %s AND month = %s
-            AND hour IS NOT NULL
-        GROUP BY hour
-        ORDER BY hour
-    """, (year, month))
-    hourly = [dict(r) for r in cur.fetchall()]
-    
-    # Daily patterns
-    cur.execute("""
-        SELECT day_of_week, ROUND(AVG(network_sri_score)::numeric, 1) as sri
-        FROM network_reliability_index
-        WHERE year = %s AND month = %s
-            AND day_of_week IS NOT NULL AND hour IS NULL
-        GROUP BY day_of_week
-        ORDER BY day_of_week
-    """, (year, month))
-    daily = [dict(r) for r in cur.fetchall()]
-    
-    cur.close()
-    conn.close()
-    
-    return {"hourly": hourly, "daily": daily}
+    try:
+        # Hourly patterns
+        cur.execute("""
+            SELECT hour, ROUND(AVG(network_sri_score)::numeric, 1) as sri
+            FROM network_reliability_index
+            WHERE year = %s AND month = %s
+                AND hour IS NOT NULL
+            GROUP BY hour
+            ORDER BY hour
+        """, (year, month))
+        hourly = [dict(r) for r in cur.fetchall()]
+        
+        # Daily patterns
+        cur.execute("""
+            SELECT day_of_week, ROUND(AVG(network_sri_score)::numeric, 1) as sri
+            FROM network_reliability_index
+            WHERE year = %s AND month = %s
+                AND day_of_week IS NOT NULL AND hour IS NULL
+            GROUP BY day_of_week
+            ORDER BY day_of_week
+        """, (year, month))
+        daily = [dict(r) for r in cur.fetchall()]
+        
+        return {"hourly": hourly, "daily": daily}
+    finally:
+        cur.close()
+        conn.close()
 
 
 def build_prompt(data: dict, request: InsightRequest) -> str:
@@ -217,12 +222,12 @@ NETWORK SUMMARY:
 
     if request.include_trends and data.get("trends"):
         trends = data["trends"]
-        if trends.get("hourly"):
+        if trends.get("hourly") and len(trends["hourly"]) > 0:
             worst_hour = min(trends["hourly"], key=lambda x: x['sri'])
             best_hour = max(trends["hourly"], key=lambda x: x['sri'])
             prompt += f"\nHOURLY PATTERNS:\n- Worst hour: {worst_hour['hour']:02d}:00 (SRI {worst_hour['sri']})\n- Best hour: {best_hour['hour']:02d}:00 (SRI {best_hour['sri']})\n"
         
-        if trends.get("daily"):
+        if trends.get("daily") and len(trends["daily"]) > 0:
             days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
             worst_day = min(trends["daily"], key=lambda x: x['sri'])
             best_day = max(trends["daily"], key=lambda x: x['sri'])
@@ -235,13 +240,13 @@ Based on this data, provide your analysis in the following JSON format:
     "executive_summary": "2-3 paragraph overview of network health and key concerns",
     "key_findings": ["finding 1", "finding 2", "finding 3", "finding 4"],
     "critical_issues": [
-        {"title": "Issue title", "description": "Detailed description", "impact": -X, "routes": ["route1", "route2"]},
+        {"title": "Issue title", "description": "Detailed description", "impact": -5, "routes": ["route1", "route2"]}
     ],
     "opportunities": [
-        {"title": "Opportunity title", "description": "Description", "impact": +X}
+        {"title": "Opportunity title", "description": "Description", "impact": 5}
     ],
     "recommendations": [
-        {"priority": "high|medium|low", "action": "Specific action", "rationale": "Why this matters", "expected_impact": "+X SRI points", "effort": "low|medium|high"}
+        {"priority": "high", "action": "Specific action", "rationale": "Why this matters", "expected_impact": "+5 SRI points", "effort": "low"}
     ]
 }
 
@@ -257,7 +262,7 @@ Return ONLY valid JSON, no markdown or explanations."""
 
 
 async def call_groq(prompt: str) -> dict:
-    """Call Groq API with Llama 3.2"""
+    """Call Groq API with Llama 3.3"""
     
     if not GROQ_API_KEY:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
@@ -287,7 +292,6 @@ async def call_groq(prompt: str) -> dict:
         content = result["choices"][0]["message"]["content"]
         
         # Parse JSON from response
-        import json
         try:
             # Clean up potential markdown code blocks
             content = content.strip()
@@ -309,23 +313,24 @@ async def generate_insights(request: InsightRequest):
     # Find latest available data period
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT year, month FROM service_reliability_index
-        WHERE day_of_week IS NULL AND hour IS NULL
-        ORDER BY year DESC, month DESC
-        LIMIT 1
-    """)
-    latest = cur.fetchone()
-    cur.close()
-    conn.close()
+    
+    try:
+        cur.execute("""
+            SELECT year, month FROM service_reliability_index
+            WHERE day_of_week IS NULL AND hour IS NULL
+            ORDER BY year DESC, month DESC
+            LIMIT 1
+        """)
+        latest = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
     
     if latest:
         year = latest['year']
         month = latest['month']
     else:
-        now = datetime.now()
-        year = now.year
-        month = now.month
+        raise HTTPException(status_code=404, detail="No SRI data available")
     
     # Gather requested data
     data = {}
@@ -357,7 +362,7 @@ async def generate_insights(request: InsightRequest):
         critical_issues=llm_response.get("critical_issues", []),
         opportunities=llm_response.get("opportunities", []),
         recommendations=llm_response.get("recommendations", []),
-        generated_at=now.isoformat(),
+        generated_at=datetime.now().isoformat(),
         data_period=f"{year}-{month:02d}"
     )
 
