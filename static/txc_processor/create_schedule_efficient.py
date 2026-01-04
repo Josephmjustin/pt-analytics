@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 import psycopg2
 import psycopg2.extras
 import os
+import time
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -287,30 +288,57 @@ for naptan_id, patterns in stop_schedules.items():
 
 print(f"✓ Built {len(db_records):,} database records")
 
-# Insert in batches
+# Insert in batches with retry logic
 print("\nInserting to database...")
-batch_size = 10000
+batch_size = 5000  # Smaller batches for stability
+max_retries = 3
+
 for i in range(0, len(db_records), batch_size):
     batch = db_records[i:i+batch_size]
     
-    psycopg2.extras.execute_values(
-        cur,
-        """
-        INSERT INTO stop_schedule (
-            naptan_id, pattern_id, day_of_week, hour,
-            scheduled_arrivals, trips_per_hour, avg_headway_minutes,
-            first_arrival, last_arrival,
-            valid_from, valid_to
-        ) VALUES %s
-        """,
-        batch
-    )
+    # Retry logic for connection drops
+    for attempt in range(max_retries):
+        try:
+            psycopg2.extras.execute_values(
+                cur,
+                """
+                INSERT INTO stop_schedule (
+                    naptan_id, pattern_id, day_of_week, hour,
+                    scheduled_arrivals, trips_per_hour, avg_headway_minutes,
+                    first_arrival, last_arrival,
+                    valid_from, valid_to
+                ) VALUES %s
+                """,
+                batch
+            )
+            
+            # Commit every batch to avoid long transactions
+            conn.commit()
+            break
+            
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            print(f"  Connection error on batch {i//batch_size + 1}, attempt {attempt + 1}/{max_retries}: {e}")
+            
+            if attempt < max_retries - 1:
+                # Reconnect
+                try:
+                    cur.close()
+                    conn.close()
+                except:
+                    pass
+                
+                time.sleep(2 ** attempt)  # Exponential backoff
+                conn = psycopg2.connect(**DB_CONFIG)
+                cur = conn.cursor()
+                print(f"  Reconnected, retrying...")
+            else:
+                print(f"  Failed after {max_retries} attempts, skipping batch")
+                raise
     
-    if (i + batch_size) % 100000 == 0:
+    # Progress reporting every 50k records
+    if (i + batch_size) % 50000 == 0 or i + batch_size >= len(db_records):
         progress = ((i + batch_size) / len(db_records)) * 100
         print(f"  Progress: {min(i + batch_size, len(db_records)):,} / {len(db_records):,} ({progress:.1f}%)")
-
-conn.commit()
 
 print(f"\n✓ Inserted {len(db_records):,} records")
 
