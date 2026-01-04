@@ -1,0 +1,73 @@
+name: TXC Schedule Processor
+
+on:
+  repository_dispatch:
+    types: [monthly-update, daily-update]
+  workflow_dispatch: # Manual trigger for testing
+
+jobs:
+  process-txc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180 # 3 hours max
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary requests lxml
+      
+      - name: Determine update type
+        id: update-type
+        run: |
+          if [[ "${{ github.event.action }}" == "monthly-update" ]]; then
+            echo "type=monthly" >> $GITHUB_OUTPUT
+            echo "Processing MONTHLY update"
+          else
+            echo "type=daily" >> $GITHUB_OUTPUT
+            echo "Processing DAILY update"
+          fi
+      
+      - name: Process Monthly Update
+        if: steps.update-type.outputs.type == 'monthly'
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+        run: |
+          cd static/txc_processor
+          echo "Starting monthly full refresh..."
+          python3 download_txc.py
+          python3 create_schedule_efficient.py
+          echo "Monthly processing complete!"
+      
+      - name: Process Daily Update
+        if: steps.update-type.outputs.type == 'daily'
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          UPDATE_DATE: ${{ github.event.client_payload.date }}
+        run: |
+          cd static/txc_processor
+          echo "Starting daily update for $UPDATE_DATE..."
+          python3 download_daily.py
+          python3 process_daily_incremental.py
+          echo "Daily processing complete!"
+      
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: processing-logs-${{ github.run_number }}
+          path: |
+            static/txc_processor/*.log
+          retention-days: 7

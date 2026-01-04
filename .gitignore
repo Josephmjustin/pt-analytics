@@ -8,5 +8,4 @@ venv/
 *.log
 .DS_Store
 notebooks/.ipynb_checkpoints/
-static/
 .sql *.sql
