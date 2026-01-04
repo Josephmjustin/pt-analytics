@@ -21,7 +21,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install psycopg2-binary requests lxml
+          pip install psycopg2-binary requests lxml python-dotenv
       
       - name: Determine update type
         id: update-type
