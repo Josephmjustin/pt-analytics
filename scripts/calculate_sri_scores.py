@@ -97,23 +97,25 @@ def calculate_sri_scores():
                  CASE WHEN jt.coefficient_of_variation IS NOT NULL THEN 1 ELSE 0 END) * 33.3 as data_completeness
                 
             FROM (
-                -- Aggregate headway_patterns to route level
+                -- Aggregate headway_patterns to route level (TODAY ONLY)
                 SELECT 
                     route_name, direction, operator, year, month, day_of_week, hour,
                     AVG(coefficient_of_variation) as coefficient_of_variation,
                     SUM(observation_count) as observation_count
                 FROM headway_patterns
                 WHERE coefficient_of_variation IS NOT NULL
+                  AND day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
                 GROUP BY route_name, direction, operator, year, month, day_of_week, hour
             ) hp
             FULL OUTER JOIN (
-                -- Aggregate schedule_adherence_patterns to route level
+                -- Aggregate schedule_adherence_patterns to route level (TODAY ONLY)
                 SELECT 
                     route_name, direction, operator, year, month, day_of_week, hour,
                     AVG(on_time_percentage) as on_time_percentage,
                     SUM(observation_count) as observation_count
                 FROM schedule_adherence_patterns
                 WHERE on_time_percentage IS NOT NULL
+                  AND day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
                 GROUP BY route_name, direction, operator, year, month, day_of_week, hour
             ) sa
                 ON hp.route_name = sa.route_name AND hp.direction = sa.direction
@@ -121,13 +123,14 @@ def calculate_sri_scores():
                 AND hp.day_of_week IS NOT DISTINCT FROM sa.day_of_week
                 AND hp.hour IS NOT DISTINCT FROM sa.hour
             FULL OUTER JOIN (
-                -- Aggregate journey_time_patterns to route level
+                -- Aggregate journey_time_patterns to route level (TODAY ONLY)
                 SELECT 
                     route_name, direction, operator, year, month, day_of_week, hour,
                     AVG(coefficient_of_variation) as coefficient_of_variation,
                     SUM(observation_count) as observation_count
                 FROM journey_time_patterns
                 WHERE coefficient_of_variation IS NOT NULL
+                  AND day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
                 GROUP BY route_name, direction, operator, year, month, day_of_week, hour
             ) jt
                 ON COALESCE(hp.route_name, sa.route_name) = jt.route_name
