@@ -54,13 +54,13 @@ def calculate_sri_scores():
         cur.execute(f"""
         WITH component_scores AS (
             SELECT 
-                COALESCE(hp.route_name, sa.route_name, jt.route_name, sd.route_name) as route_name,
-                COALESCE(hp.direction, sa.direction, jt.direction, sd.direction) as direction,
-                COALESCE(hp.operator, sa.operator, jt.operator, sd.operator) as operator,
-                COALESCE(hp.year, sa.year, jt.year, sd.year) as year,
-                COALESCE(hp.month, sa.month, jt.month, sd.month) as month,
-                COALESCE(hp.day_of_week, sa.day_of_week, jt.day_of_week, sd.day_of_week) as day_of_week,
-                COALESCE(hp.hour, sa.hour, jt.hour, sd.hour) as hour,
+                COALESCE(hp.route_name, sa.route_name, jt.route_name) as route_name,
+                COALESCE(hp.direction, sa.direction, jt.direction) as direction,
+                COALESCE(hp.operator, sa.operator, jt.operator) as operator,
+                COALESCE(hp.year, sa.year, jt.year) as year,
+                COALESCE(hp.month, sa.month, jt.month) as month,
+                COALESCE(hp.day_of_week, sa.day_of_week, jt.day_of_week) as day_of_week,
+                COALESCE(hp.hour, sa.hour, jt.hour) as hour,
                 
                 -- Calculate headway score on-the-fly
                 COALESCE(
@@ -86,21 +86,15 @@ def calculate_sri_scores():
                     50.0
                 ) as journey_score,
                 
-                -- Calculate service delivery score on-the-fly
-                COALESCE(
-                    GREATEST(0, LEAST(100,
-                        ((sd.service_delivery_rate - {config[14]}) / ({config[13]} - {config[14]})) * 100
-                    )),
-                    50.0
-                ) as service_score,
+                -- Service delivery: default 50 (network-level only, not route-level)
+                50.0 as service_score,
                 
                 COALESCE(hp.observation_count, 0) + COALESCE(sa.observation_count, 0) + 
-                COALESCE(jt.observation_count, 0) + COALESCE(sd.observation_count, 0) as total_observations,
+                COALESCE(jt.observation_count, 0) as total_observations,
                 
                 (CASE WHEN hp.coefficient_of_variation IS NOT NULL THEN 1 ELSE 0 END +
                  CASE WHEN sa.on_time_percentage IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN jt.coefficient_of_variation IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN sd.service_delivery_rate IS NOT NULL THEN 1 ELSE 0 END) * 25.0 as data_completeness
+                 CASE WHEN jt.coefficient_of_variation IS NOT NULL THEN 1 ELSE 0 END) * 33.3 as data_completeness
                 
             FROM (
                 -- Aggregate headway_patterns to route level
@@ -143,23 +137,6 @@ def calculate_sri_scores():
                 AND COALESCE(hp.month, sa.month) = jt.month
                 AND COALESCE(hp.day_of_week, sa.day_of_week) IS NOT DISTINCT FROM jt.day_of_week
                 AND COALESCE(hp.hour, sa.hour) IS NOT DISTINCT FROM jt.hour
-            FULL OUTER JOIN (
-                -- Aggregate service_delivery_patterns to route level
-                SELECT 
-                    route_name, direction, operator, year, month, day_of_week, hour,
-                    AVG(service_delivery_rate) as service_delivery_rate,
-                    SUM(observation_count) as observation_count
-                FROM service_delivery_patterns
-                WHERE service_delivery_rate IS NOT NULL
-                GROUP BY route_name, direction, operator, year, month, day_of_week, hour
-            ) sd
-                ON COALESCE(hp.route_name, sa.route_name, jt.route_name) = sd.route_name
-                AND COALESCE(hp.direction, sa.direction, jt.direction) = sd.direction
-                AND COALESCE(hp.operator, sa.operator, jt.operator) = sd.operator
-                AND COALESCE(hp.year, sa.year, jt.year) = sd.year
-                AND COALESCE(hp.month, sa.month, jt.month) = sd.month
-                AND COALESCE(hp.day_of_week, sa.day_of_week, jt.day_of_week) IS NOT DISTINCT FROM sd.day_of_week
-                AND COALESCE(hp.hour, sa.hour, jt.hour) IS NOT DISTINCT FROM sd.hour
         )
         INSERT INTO service_reliability_index (
             route_name, direction, operator, year, month, day_of_week, hour,
