@@ -63,7 +63,13 @@ def calculate_sri_scores():
                 COALESCE(hc.hour, sa.hour, jt.hour, sd.hour) as hour,
                 
                 COALESCE(hc.score, 50.0) as headway_score,
-                COALESCE(sa.score, 50.0) as schedule_score,
+                -- Calculate schedule score on-the-fly from patterns
+                COALESCE(
+                    GREATEST(0, LEAST(100,
+                        ((sa.on_time_percentage - {config[10]}) / ({config[9]} - {config[10]})) * 100
+                    )),
+                    50.0
+                ) as schedule_score,
                 COALESCE(jt.score, 50.0) as journey_score,
                 COALESCE(sd.score, 50.0) as service_score,
                 
@@ -71,12 +77,20 @@ def calculate_sri_scores():
                 COALESCE(jt.observation_count, 0) + COALESCE(sd.observation_count, 0) as total_observations,
                 
                 (CASE WHEN hc.score IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN sa.score IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN sa.on_time_percentage IS NOT NULL THEN 1 ELSE 0 END +
                  CASE WHEN jt.score IS NOT NULL THEN 1 ELSE 0 END +
                  CASE WHEN sd.score IS NOT NULL THEN 1 ELSE 0 END) * 25.0 as data_completeness
                 
             FROM headway_consistency_scores hc
-            FULL OUTER JOIN schedule_adherence_scores sa 
+            FULL OUTER JOIN (
+                -- Aggregate schedule_adherence_patterns to route level
+                SELECT 
+                    route_name, direction, operator, year, month, day_of_week, hour,
+                    AVG(on_time_percentage) as on_time_percentage,
+                    SUM(observation_count) as observation_count
+                FROM schedule_adherence_patterns
+                GROUP BY route_name, direction, operator, year, month, day_of_week, hour
+            ) sa 
                 ON hc.route_name = sa.route_name AND hc.direction = sa.direction
                 AND hc.operator = sa.operator AND hc.year = sa.year AND hc.month = sa.month
                 AND hc.day_of_week IS NOT DISTINCT FROM sa.day_of_week
