@@ -14,6 +14,8 @@ PORT = 8765
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
+        print(f"[{self.log_date_time_string()}] Received POST from {self.client_address}")
+        
         # Read payload
         content_length = int(self.headers['Content-Length'])
         body = self.rfile.read(content_length)
@@ -22,6 +24,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
             data = json.loads(body)
             workflow_type = data.get('type')  # 'monthly' or 'daily'
             status = data.get('status')       # 'success' or 'failed'
+            
+            print(f"Processing: type={workflow_type}, status={status}")
             
             if workflow_type == 'monthly':
                 status_file = TRACKING_DIR / "monthly_status.txt"
