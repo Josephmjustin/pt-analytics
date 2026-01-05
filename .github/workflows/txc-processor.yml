@@ -60,6 +60,28 @@ jobs:
           echo ""
           echo "✅ Monthly processing complete!"
       
+      - name: Notify VM - Monthly Success
+        if: steps.update-type.outputs.type == 'monthly' && success()
+        env:
+          VM_HOST: ${{ secrets.DB_HOST }}
+        run: |
+          echo "📡 Notifying VM of successful completion..."
+          curl -X POST http://$VM_HOST:8765/ \
+            -H "Content-Type: application/json" \
+            -d '{"type":"monthly","status":"success"}' \
+            --max-time 5 || echo "Warning: Could not notify VM (non-critical)"
+      
+      - name: Notify VM - Monthly Failed
+        if: steps.update-type.outputs.type == 'monthly' && failure()
+        env:
+          VM_HOST: ${{ secrets.DB_HOST }}
+        run: |
+          echo "📡 Notifying VM of failure..."
+          curl -X POST http://$VM_HOST:8765/ \
+            -H "Content-Type: application/json" \
+            -d '{"type":"monthly","status":"failed"}' \
+            --max-time 5 || echo "Warning: Could not notify VM (non-critical)"
+      
       - name: Process Daily Update
         if: steps.update-type.outputs.type == 'daily'
         env:
@@ -78,6 +100,28 @@ jobs:
           python3 process_daily_incremental.py
           echo ""
           echo "✅ Daily processing complete!"
+      
+      - name: Notify VM - Daily Success
+        if: steps.update-type.outputs.type == 'daily' && success()
+        env:
+          VM_HOST: ${{ secrets.DB_HOST }}
+        run: |
+          echo "📡 Notifying VM of successful completion..."
+          curl -X POST http://$VM_HOST:8765/ \
+            -H "Content-Type: application/json" \
+            -d '{"type":"daily","status":"success"}' \
+            --max-time 5 || echo "Warning: Could not notify VM (non-critical)"
+      
+      - name: Notify VM - Daily Failed
+        if: steps.update-type.outputs.type == 'daily' && failure()
+        env:
+          VM_HOST: ${{ secrets.DB_HOST }}
+        run: |
+          echo "📡 Notifying VM of failure..."
+          curl -X POST http://$VM_HOST:8765/ \
+            -H "Content-Type: application/json" \
+            -d '{"type":"daily","status":"failed"}' \
+            --max-time 5 || echo "Warning: Could not notify VM (non-critical)"
       
       - name: Cleanup temporary files
         if: always()

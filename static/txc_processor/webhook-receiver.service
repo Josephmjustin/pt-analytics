@@ -1,0 +1,14 @@
+[Unit]
+Description=TXC Workflow Webhook Receiver
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pt-analytics/static/txc_processor
+ExecStart=/usr/bin/python3 /home/ubuntu/pt-analytics/static/txc_processor/webhook_receiver.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
