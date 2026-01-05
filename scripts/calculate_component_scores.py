@@ -132,64 +132,9 @@ def calculate_component_scores():
         conn.commit()
         
         # 2. SCHEDULE ADHERENCE SCORES
-        print("2. Calculating schedule adherence scores...")
-        cur.execute(f"""
-            WITH deduplicated_patterns AS (
-                SELECT 
-                    route_name, direction, operator, year, month, day_of_week, hour,
-                    MAX(on_time_percentage) as on_time_percentage,
-                    MAX(avg_deviation_minutes) as avg_deviation_minutes,
-                    MAX(std_deviation_minutes) as std_deviation_minutes,
-                    SUM(observation_count) as observation_count
-                FROM schedule_adherence_patterns
-                WHERE on_time_percentage IS NOT NULL
-                GROUP BY route_name, direction, operator, year, month, day_of_week, hour
-            )
-            INSERT INTO schedule_adherence_scores (
-                route_name, direction, operator, year, month, day_of_week, hour,
-                on_time_percentage, avg_deviation_minutes, std_deviation_minutes,
-                score, grade, observation_count, calculation_timestamp
-            )
-            SELECT 
-                route_name, direction, operator, year, month, day_of_week, hour,
-                on_time_percentage,
-                avg_deviation_minutes,
-                std_deviation_minutes,
-                -- Score: Higher on-time% = better score
-                GREATEST(0, LEAST(100,
-                    ((on_time_percentage - {config[10]}) / 
-                     ({config[9]} - {config[10]})) * 100
-                ))::DECIMAL(5,2) as score,
-                'C' as grade,
-                observation_count,
-                NOW()
-            FROM deduplicated_patterns
-            ON CONFLICT (route_name, direction, operator, year, month, day_of_week, hour)
-            DO UPDATE SET
-                on_time_percentage = EXCLUDED.on_time_percentage,
-                avg_deviation_minutes = EXCLUDED.avg_deviation_minutes,
-                std_deviation_minutes = EXCLUDED.std_deviation_minutes,
-                score = EXCLUDED.score,
-                grade = EXCLUDED.grade,
-                observation_count = EXCLUDED.observation_count,
-                calculation_timestamp = NOW()
-        """)
-        sa_count = cur.rowcount
-        conn.commit()
-        print(f"   ✓ Upserted {sa_count:,} schedule adherence scores")
-        
-        # Update grades
-        cur.execute("""
-            UPDATE schedule_adherence_scores
-            SET grade = CASE 
-                WHEN score >= 90 THEN 'A'
-                WHEN score >= 80 THEN 'B'
-                WHEN score >= 70 THEN 'C'
-                WHEN score >= 60 THEN 'D'
-                ELSE 'F'
-            END
-        """)
-        conn.commit()
+        # SKIPPED - Calculate on-the-fly from schedule_adherence_patterns when needed
+        print("2. Schedule adherence scores - calculated on-the-fly from patterns ✓")
+        sa_count = 0
         
         # 3. JOURNEY TIME CONSISTENCY SCORES
         print("3. Calculating journey time consistency scores...")
@@ -329,11 +274,12 @@ def calculate_component_scores():
         """)
         hc_avg = cur.fetchone()
         
-        cur.execute("""
+        # Schedule adherence - calculate from patterns
+        cur.execute(f"""
             SELECT 
-                ROUND(AVG(score)::numeric, 1) as avg_sa,
-                ROUND(AVG(CASE WHEN score >= 60 THEN 1.0 ELSE 0.0 END) * 100, 1) as pass_rate
-            FROM schedule_adherence_scores
+                ROUND(AVG(on_time_percentage)::numeric, 1) as avg_sa,
+                ROUND(AVG(CASE WHEN on_time_percentage >= 60 THEN 1.0 ELSE 0.0 END) * 100, 1) as pass_rate
+            FROM schedule_adherence_patterns
         """)
         sa_avg = cur.fetchone()
         
