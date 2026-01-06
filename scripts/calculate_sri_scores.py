@@ -104,6 +104,8 @@ def calculate_sri_scores():
                     SUM(observation_count) as observation_count
                 FROM headway_patterns
                 WHERE coefficient_of_variation IS NOT NULL
+                  AND year = EXTRACT(YEAR FROM CURRENT_DATE)::int
+                  AND month = EXTRACT(MONTH FROM CURRENT_DATE)::int
                   AND day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
                 GROUP BY route_name, direction, operator, year, month, day_of_week, hour
             ) hp
@@ -115,6 +117,8 @@ def calculate_sri_scores():
                     SUM(observation_count) as observation_count
                 FROM schedule_adherence_patterns
                 WHERE on_time_percentage IS NOT NULL
+                  AND year = EXTRACT(YEAR FROM CURRENT_DATE)::int
+                  AND month = EXTRACT(MONTH FROM CURRENT_DATE)::int
                   AND day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
                 GROUP BY route_name, direction, operator, year, month, day_of_week, hour
             ) sa
@@ -130,6 +134,8 @@ def calculate_sri_scores():
                     SUM(observation_count) as observation_count
                 FROM journey_time_patterns
                 WHERE coefficient_of_variation IS NOT NULL
+                  AND year = EXTRACT(YEAR FROM CURRENT_DATE)::int
+                  AND month = EXTRACT(MONTH FROM CURRENT_DATE)::int
                   AND day_of_week = EXTRACT(DOW FROM CURRENT_DATE)::int
                 GROUP BY route_name, direction, operator, year, month, day_of_week, hour
             ) jt
