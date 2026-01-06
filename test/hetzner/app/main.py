@@ -1,7 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # load API_TOKEN from .env
 
 app = FastAPI()
+API_TOKEN = os.getenv("API_TOKEN")
 
-@app.get("/")
-def read_root():
-    return {"message": "Hellofrom MVP API"}
+def verify_token(x_token: str = Header(...)):
+    if x_token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+@app.get("/data")
+def get_data(token: str = Header(...)):
+    verify_token(token)
+    return {"message": "Authorized access"}
