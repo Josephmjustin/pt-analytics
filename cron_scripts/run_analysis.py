@@ -37,26 +37,9 @@ OPERATOR_CODE_MAP = {
 }
 
 try:
-    from scripts.calculate_bunching_from_arrivals import calculate_bunching_from_arrivals
-    from scripts.aggregate_scores import aggregate_scores
-    from scripts.aggregate_route_headways import aggregate_route_headways
     from scripts.cleanup_old_data import cleanup_old_data
     HAS_ALL_MODULES = True
     
-    # SRI pipeline imports (optional - may not be ready yet)
-    try:
-        from scripts.aggregate_headway_patterns import aggregate_headway_patterns
-        from scripts.aggregate_schedule_adherence_patterns import aggregate_schedule_adherence_patterns
-        from scripts.aggregate_journey_time_patterns import aggregate_journey_time_patterns
-        from scripts.aggregate_service_delivery_patterns import aggregate_service_delivery_patterns
-        from scripts.calculate_component_scores import calculate_component_scores
-        from scripts.calculate_sri_scores import calculate_sri_scores
-        from scripts.create_monthly_daily_aggregates import create_monthly_daily_aggregates
-        HAS_SRI_MODULES = True
-    except ImportError:
-        HAS_SRI_MODULES = False
-        print("Note: SRI modules not available yet")
-        
 except ImportError as e:
     HAS_ALL_MODULES = False
     HAS_SRI_MODULES = False
@@ -302,79 +285,29 @@ def detect_and_match_stops():
             conn.close()
             print("✓ Connection closed")
 
-def run_sri_calculations():
-    """Run SRI pipeline if modules are available"""
-    if not HAS_SRI_MODULES:
-        print("  ⚠ SRI modules not available - skipping")
-        return
-    
-    try:
-        print("\n📊 Running SRI calculations...")
-        print("-" * 60)
-        
-        print("1/7: Aggregating headway patterns...")
-        aggregate_headway_patterns()
-        
-        print("2/7: Aggregating schedule adherence...")
-        aggregate_schedule_adherence_patterns()
-        
-        print("3/7: Aggregating journey times...")
-        aggregate_journey_time_patterns()
-        
-        print("4/7: Aggregating service delivery...")
-        aggregate_service_delivery_patterns()
-        
-        print("5/7: Calculating component scores...")
-        calculate_component_scores()
-        
-        print("6/7: Calculating hourly SRI scores...")
-        calculate_sri_scores()
-        
-        print("7/7: Creating daily/monthly aggregates...")
-        create_monthly_daily_aggregates()
-        
-        print("-" * 60)
-        print("✓ SRI calculations complete")
-        
-    except Exception as e:
-        print(f"⚠ SRI calculation failed: {e}")
-        print("  Continuing with cleanup...")
+try:
+    from scripts.aggregate_dwell_times import aggregate_dwell_times
+    from scripts.cleanup_old_data import cleanup_old_data
+    HAS_DWELL_MODULE = True
+except ImportError as e:
+    HAS_DWELL_MODULE = False
+    print(f"Warning: Missing module - {e}")
 
 def run_analysis():
     """Main analysis with proper error handling"""
-    print(f"[{datetime.now()}] Starting OPTIMIZED analysis...")
+    print(f"[{datetime.now()}] Starting analysis...")
     print("="*60)
     
     try:
         stop_events, matched = detect_and_match_stops()
         print(f"✓ Analysis: {stop_events} stops detected, {matched} matched")
         
-        if matched > 0 and HAS_ALL_MODULES:
-            print("\nCalculating bunching scores...")
-            calculate_bunching_from_arrivals()
-            
-            print("Aggregating patterns...")
-            aggregate_scores()
-            aggregate_route_headways()
+        if matched > 0 and HAS_DWELL_MODULE:
+            print("\nAggregating dwell times...")
+            aggregate_dwell_times()
             
             print("Cleaning up old data...")
             cleanup_old_data()
-
-            # Run SRI pipeline (if available)
-            run_sri_calculations()
-            
-            # Cleanup old arrivals
-            conn = None
-            try:
-                conn = get_db_connection()
-                cur = conn.cursor()
-                cur.execute("DELETE FROM vehicle_arrivals WHERE timestamp < NOW() - INTERVAL '1 hour'")
-                deleted = cur.rowcount
-                conn.commit()
-                print(f"✓ Deleted {deleted} old arrivals")
-            finally:
-                if conn:
-                    conn.close()
         
         print("="*60)
         print(f"✓ Complete at {datetime.now()}")
