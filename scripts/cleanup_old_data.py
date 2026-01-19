@@ -79,46 +79,43 @@ def cleanup_old_data():
         print(f"   After: {before_positions - total_deleted:,} positions")
         
         # ========================================================================
-        # 2. VEHICLE ARRIVALS - Keep only 1 hour
+        # 2. VEHICLE ARRIVALS - Delete after aggregation into dwell_time_analysis
         # ========================================================================
         print("\n2. Cleaning vehicle_arrivals...")
         
-        cur.execute("SELECT COUNT(*) FROM vehicle_arrivals WHERE timestamp < NOW() - INTERVAL '1 hour'")
+        cur.execute("SELECT COUNT(*) FROM vehicle_arrivals")
         old_arrivals = cur.fetchone()[0]
         
         if old_arrivals > 0:
+            # These should already be aggregated by aggregate_dwell_times.py
+            # This is a safety cleanup for any stragglers
             cur.execute("DELETE FROM vehicle_arrivals WHERE timestamp < NOW() - INTERVAL '1 hour'")
+            deleted = cur.rowcount
             conn.commit()
-            print(f"   Deleted: {old_arrivals:,} old arrivals (>1 hour)")
+            print(f"   Deleted: {deleted:,} arrivals (>1 hour)")
         else:
             print(f"   No old arrivals to clean")
         
         # ========================================================================
-        # 3. SRI TABLES - USING RUNNING AVERAGES (永久保存)
+        # 3. DWELL TIME ANALYSIS - Fixed size, no cleanup needed
         # ========================================================================
-        print("\n3. SRI tables (using running averages - no cleanup needed)...")
+        print("\n3. Dwell time analysis (fixed size - no cleanup needed)...")
         
-        cur.execute("""
-            SELECT 
-                'service_reliability_index' as table_name,
-                COUNT(*) as rows,
-                COUNT(*) FILTER (WHERE day_of_week IS NULL AND hour IS NULL) as monthly,
-                COUNT(*) FILTER (WHERE day_of_week IS NOT NULL AND hour IS NULL) as daily,
-                COUNT(*) FILTER (WHERE day_of_week IS NOT NULL AND hour IS NOT NULL) as hourly
-            FROM service_reliability_index
-        """)
-        sri = cur.fetchone()
+        cur.execute("SELECT COUNT(*) FROM dwell_time_analysis")
+        dwell_rows = cur.fetchone()[0]
         
-        if sri and sri[1] > 0:
-            print(f"   service_reliability_index: {sri[1]:,} rows")
-            print(f"     Monthly: {sri[2]:,}, Daily: {sri[3]:,}, Hourly: {sri[4]:,}")
-            print(f"     ✓ FIXED SIZE - updates existing rows only")
-        
-        cur.execute("SELECT COUNT(*) FROM network_reliability_index")
-        network = cur.fetchone()[0]
-        if network > 0:
-            print(f"   network_reliability_index: {network:,} rows")
-            print(f"     ✓ FIXED SIZE - updates existing rows only")
+        if dwell_rows > 0:
+            cur.execute("""
+                SELECT 
+                    COUNT(DISTINCT route_name) as routes,
+                    COUNT(DISTINCT naptan_id) as stops,
+                    SUM(sample_count) as total_samples
+                FROM dwell_time_analysis
+            """)
+            stats = cur.fetchone()
+            print(f"   {dwell_rows:,} aggregated records")
+            print(f"   {stats[0]} routes, {stats[1]} stops, {stats[2]:,} samples")
+            print(f"   ✓ FIXED SIZE - updates existing rows only")
         
         # ========================================================================
         # VACUUM to reclaim disk space
@@ -137,6 +134,7 @@ def cleanup_old_data():
         
         cur.execute("VACUUM vehicle_positions")
         cur.execute("VACUUM vehicle_arrivals")
+        cur.execute("VACUUM dwell_time_analysis")
         
         # Check final sizes
         cur.execute("""
