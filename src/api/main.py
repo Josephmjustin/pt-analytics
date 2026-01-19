@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from src.api.routes import stops, vehicles, routes, test_txc, sri, insights
-# from src.api.transxchange_loader import load_transxchange_data
+from src.api.routes import stops, vehicles, routes, test_txc, dwell_time
 
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
@@ -12,13 +11,13 @@ async def lifespan(app: FastAPI):
     sys.stdout.flush()
     print("="*80, flush=True)
     print("PT ANALYTICS API STARTED", flush=True)
-    print("TransXChange data will load on first API request (lazy loading)", flush=True)
+    print("Dwell Time Analysis API - Demand Proxy", flush=True)
     print("="*80, flush=True)
     yield
     # Shutdown
     print("Shutting down...", flush=True)
 
-app = FastAPI(title="PT Analytics API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="PT Analytics API", version="2.0.0", lifespan=lifespan)
 
 # CORS for frontend
 app.add_middleware(
@@ -42,9 +41,12 @@ app.include_router(stops.router)
 app.include_router(vehicles.router)
 app.include_router(routes.router)
 app.include_router(test_txc.router)
-app.include_router(sri.router)
-app.include_router(insights.router)
+app.include_router(dwell_time.router)
 
 @app.get("/")
 def root():
-    return {"message": "PT Analytics API", "version": "1.0.0"}
+    return {
+        "message": "PT Analytics API - Dwell Time Analysis",
+        "version": "2.0.0",
+        "features": ["demand_proxy", "temporal_patterns", "hotspot_detection"]
+    }
