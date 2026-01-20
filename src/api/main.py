@@ -23,7 +23,7 @@ app = FastAPI(title="PT Analytics API", version="2.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://ptstat.onrender.com",
+        "https://josephmjustin.github.io",
         "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
