@@ -8,6 +8,14 @@ from typing import Optional
 
 router = APIRouter(prefix="/dwell-time", tags=["dwell-time"])
 
+OPERATOR_NAME_MAP = {
+    'Arriva Merseyside': 'Arriva',
+    'Arriva': 'Arriva',
+    'Stagecoach Merseyside': 'Stagecoach', 
+    'Stagecoach': 'Stagecoach',
+    'First Bus': 'First Bus',
+}
+
 @router.get("/routes")
 def get_routes_with_dwell_data():
     """Get all routes with dwell time data available"""
@@ -197,6 +205,8 @@ def get_dwell_time_heatmap(
     operator: Optional[str] = None
 ):
     """Get heatmap data: stops × hours with dwell times"""
+    if operator:
+        operator = OPERATOR_NAME_MAP.get(operator, operator)
     conn = get_db_connection()
     cur = conn.cursor()
     
