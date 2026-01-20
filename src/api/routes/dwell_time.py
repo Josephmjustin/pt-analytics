@@ -190,6 +190,102 @@ def get_high_demand_stops(
     
     return {"hotspots": hotspots, "count": len(hotspots)}
 
+@router.get("/heatmap")
+def get_dwell_time_heatmap(
+    route_name: str,
+    direction: Optional[str] = None,
+    operator: Optional[str] = None
+):
+    """Get heatmap data: stops × hours with dwell times"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get stops on route in sequence order
+    query_stops = """
+        SELECT DISTINCT
+            ps.naptan_id,
+            ts.stop_name,
+            MIN(ps.stop_sequence) as sequence
+        FROM txc_pattern_stops ps
+        JOIN txc_stops ts ON ps.naptan_id = ts.naptan_id
+        JOIN txc_route_patterns rp ON ps.pattern_id = rp.pattern_id
+        WHERE rp.route_name = %s
+    """
+    
+    params_stops = [route_name]
+    
+    if direction:
+        query_stops += " AND rp.direction = %s"
+        params_stops.append(direction)
+    
+    if operator:
+        query_stops += " AND rp.operator_name = %s"
+        params_stops.append(operator)
+    
+    query_stops += " GROUP BY ps.naptan_id, ts.stop_name ORDER BY sequence"
+    
+    cur.execute(query_stops, params_stops)
+    stops = cur.fetchall()
+    
+    if not stops:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="No stops found for this route")
+    
+    # Get dwell time data for heatmap
+    query_heatmap = """
+        SELECT 
+            naptan_id,
+            hour_of_day,
+            ROUND(AVG(avg_dwell_seconds)::numeric, 1) as avg_dwell
+        FROM dwell_time_analysis
+        WHERE route_name = %s
+    """
+    
+    params_heatmap = [route_name]
+    
+    if direction:
+        query_heatmap += " AND direction = %s"
+        params_heatmap.append(direction)
+    
+    if operator:
+        query_heatmap += " AND operator = %s"
+        params_heatmap.append(operator)
+    
+    query_heatmap += " GROUP BY naptan_id, hour_of_day"
+    
+    cur.execute(query_heatmap, params_heatmap)
+    heatmap_data = cur.fetchall()
+    
+    cur.close()
+    conn.close()
+    
+    # Build matrix: stops × hours
+    hours = list(range(24))
+    stop_ids = [s['naptan_id'] for s in stops]
+    stop_names = [s['stop_name'] for s in stops]
+    
+    # Initialize matrix with None
+    matrix = [[None for _ in hours] for _ in stop_ids]
+    
+    # Fill matrix with actual data
+    for row in heatmap_data:
+        try:
+            stop_idx = stop_ids.index(row['naptan_id'])
+            hour_idx = row['hour_of_day']
+            matrix[stop_idx][hour_idx] = float(row['avg_dwell'])
+        except (ValueError, IndexError):
+            continue
+    
+    return {
+        "route_name": route_name,
+        "direction": direction,
+        "operator": operator,
+        "stops": stop_names,
+        "hours": hours,
+        "data": matrix
+    }
+
 @router.get("/stats")
 def get_dwell_time_stats():
     """Get overall dwell time statistics"""
