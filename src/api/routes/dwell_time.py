@@ -286,6 +286,37 @@ def get_dwell_time_heatmap(
         "data": matrix
     }
 
+@router.get("/filters")
+def get_filter_options():
+    """Get available filter options for dropdowns"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get unique operators
+    cur.execute("""
+        SELECT DISTINCT operator_name
+        FROM txc_route_patterns
+        ORDER BY operator_name
+    """)
+    operators = [row['operator_name'] for row in cur.fetchall()]
+    
+    # Get unique directions
+    cur.execute("""
+        SELECT DISTINCT direction
+        FROM txc_route_patterns
+        WHERE direction IS NOT NULL
+        ORDER BY direction
+    """)
+    directions = [row['direction'] for row in cur.fetchall()]
+    
+    cur.close()
+    conn.close()
+    
+    return {
+        "operators": operators,
+        "directions": directions
+    }
+
 @router.get("/stats")
 def get_dwell_time_stats():
     """Get overall dwell time statistics"""
