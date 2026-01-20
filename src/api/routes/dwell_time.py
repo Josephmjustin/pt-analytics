@@ -205,8 +205,11 @@ def get_dwell_time_heatmap(
     operator: Optional[str] = None
 ):
     """Get heatmap data: stops × hours with dwell times"""
-    if operator:
-        operator = OPERATOR_NAME_MAP.get(operator, operator)
+    
+    # Keep original for TXC query, map for dwell query
+    operator_txc = operator
+    operator_dwell = OPERATOR_NAME_MAP.get(operator, operator) if operator else None
+    
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -228,9 +231,9 @@ def get_dwell_time_heatmap(
         query_stops += " AND rp.direction = %s"
         params_stops.append(direction)
     
-    if operator:
+    if operator_txc:
         query_stops += " AND rp.operator_name = %s"
-        params_stops.append(operator)
+        params_stops.append(operator_txc)
     
     query_stops += " GROUP BY ps.naptan_id, ts.stop_name ORDER BY sequence"
     
@@ -258,9 +261,9 @@ def get_dwell_time_heatmap(
         query_heatmap += " AND direction = %s"
         params_heatmap.append(direction)
     
-    if operator:
+    if operator_dwell:
         query_heatmap += " AND operator = %s"
-        params_heatmap.append(operator)
+        params_heatmap.append(operator_dwell)
     
     query_heatmap += " GROUP BY naptan_id, hour_of_day"
     
