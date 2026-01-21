@@ -10,14 +10,14 @@ async def lifespan(app: FastAPI):
     import sys
     sys.stdout.flush()
     print("="*80, flush=True)
-    print("PT ANALYTICS API STARTED", flush=True)
-    print("Dwell Time Analysis API - Demand Proxy", flush=True)
+    print("PASSSENGER ACTIVITY ANALYTICS API STARTED", flush=True)
+    print("Dwell Time Analysis API - Passenger Activity", flush=True)
     print("="*80, flush=True)
     yield
     # Shutdown
     print("Shutting down...", flush=True)
 
-app = FastAPI(title="PT Analytics API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Passenger Activity Analytics API", version="1.0.0", lifespan=lifespan)
 
 # CORS for frontend
 app.add_middleware(
@@ -40,13 +40,13 @@ app.add_middleware(
 app.include_router(stops.router)
 app.include_router(vehicles.router)
 app.include_router(routes.router)
-app.include_router(test_txc.router)
+# app.include_router(test_txc.router)
 app.include_router(dwell_time.router)
 
 @app.get("/")
 def root():
     return {
-        "message": "PT Analytics API - Dwell Time Analysis",
-        "version": "2.0.0",
+        "message": "Passenger Activity Analytics API - Dwell Time Analysis",
+        "version": "1.0.0",
         "features": ["demand_proxy", "temporal_patterns", "hotspot_detection"]
     }
