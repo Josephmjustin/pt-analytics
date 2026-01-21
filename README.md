@@ -545,7 +545,7 @@ GET /dwell-time/filters                 # Available operators and directions
 
 **API Demo:** [api.heyico.work/docs](https://api.heyico.work/docs)  
 **GitHub:** [josephmjustin/pt-analytics](https://github.com/josephmjustin/pt-analytics)  
-**LinkedIn:** [[josephmjustin](https://www.linkedin.com/in/josephmjustin/)]
+**LinkedIn:** [josephmjustin](https://www.linkedin.com/in/josephmjustin/)
 
 ---
 
