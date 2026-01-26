@@ -121,16 +121,17 @@ def store_vehicle_positions(vehicles):
         ]
         
         execute_batch(cur, """
-            INSERT INTO vehicle_positions 
-            (vehicle_id, latitude, longitude, timestamp, route_name, trip_id, bearing, 
-             direction, operator, origin, destination)
+            INSERT INTO vehicle_positions
+            (vehicle_id, latitude, longitude, timestamp, route_name, trip_id, bearing,
+            direction, operator, origin, destination)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (vehicle_id, timestamp) DO UPDATE SET
                 route_name = EXCLUDED.route_name,
                 direction = EXCLUDED.direction,
                 operator = EXCLUDED.operator,
                 origin = EXCLUDED.origin,
-                destination = EXCLUDED.destination
+                destination = EXCLUDED.destination,
+                analyzed = false
         """, values, page_size=500)
         
         conn.commit()
