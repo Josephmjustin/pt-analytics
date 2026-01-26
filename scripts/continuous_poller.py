@@ -6,7 +6,7 @@ Fetches vehicle positions every 10 seconds with direction and route info
 import os
 import requests
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import execute_batch
 from dotenv import load_dotenv
@@ -43,6 +43,9 @@ def fetch_vehicle_positions():
         vehicle_activities = root.findall('.//siri:VehicleActivity', NS)
         
         vehicles = []
+        now = datetime.now(tz=None)  # Current time for age comparison
+        max_age = timedelta(minutes=5)  # Skip positions older than 5 minutes
+        
         for activity in vehicle_activities:
             mvj = activity.find('.//siri:MonitoredVehicleJourney', NS)
             
@@ -71,6 +74,20 @@ def fetch_vehicle_positions():
             recorded_at = activity.find('.//siri:RecordedAtTime', NS)
             journey_ref = mvj.find('siri:FramedVehicleJourneyRef/siri:DatedVehicleJourneyRef', NS)
             
+            # Parse timestamp
+            if recorded_at is not None:
+                timestamp = datetime.fromisoformat(recorded_at.text.replace('Z', '+00:00'))
+                # Make timezone-naive for comparison
+                timestamp_naive = timestamp.replace(tzinfo=None)
+            else:
+                timestamp = datetime.now()
+                timestamp_naive = timestamp
+            
+            # Skip old positions
+            position_age = now - timestamp_naive
+            if position_age > max_age:
+                continue
+            
             vehicle_data = {
                 'vehicle_id': vehicle_ref.text if vehicle_ref is not None else None,
                 'route_name': line_ref.text if line_ref is not None else None,
@@ -81,7 +98,7 @@ def fetch_vehicle_positions():
                 'latitude': float(latitude.text),
                 'longitude': float(longitude.text),
                 'bearing': float(bearing.text) if bearing is not None else None,
-                'timestamp': datetime.fromisoformat(recorded_at.text.replace('Z', '+00:00')) if recorded_at is not None else datetime.now(),
+                'timestamp': timestamp,
                 'trip_id': journey_ref.text if journey_ref is not None else None
             }
             
